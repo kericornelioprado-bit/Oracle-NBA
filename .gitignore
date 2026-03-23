@@ -36,6 +36,11 @@ data/processed/*
 # Environment variables
 .env
 
+# Google Cloud Keys and Config
+config/
+*.json
+!package.json
+
 # Terraform
 .terraform/
 *.tfstate
