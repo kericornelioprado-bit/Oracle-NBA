@@ -1,29 +1,32 @@
-# Base image
-FROM fedora:latest
+# Usamos la imagen oficial de Python para máxima estabilidad y compatibilidad
+FROM python:3.11-slim
 
-# Metadata
+# Metadatos
 LABEL maintainer="Oracle NBA Team"
 LABEL description="Environment for NBA Predictive Model development"
 
-# Install system dependencies
-RUN dnf -y update && dnf -y install \
-    python3.11 \
-    python3-pip \
-    gcc \
-    gcc-c++ \
-    make \
+# Instalamos dependencias del sistema necesarias para XGBoost y GCS
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libgomp1 \
     git \
-    && dnf clean all
+    && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Establecemos el directorio de trabajo
 WORKDIR /app
 
-# Copy requirements and install python dependencies
+# Copiamos requirements y los instalamos
+# Usamos --upgrade para asegurar que las librerías de Google se vinculen correctamente
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy project structure
+# Copiamos la estructura del proyecto
 COPY . .
 
-# Default command
-CMD ["python3"]
+# Exponemos el puerto
+EXPOSE 8080
+
+# Usamos Gunicorn para el servidor HTTP
+# Aumentamos el timeout a 600 segundos (10 min) para procesos pesados de la API NBA
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "600", "--workers", "1", "--threads", "4", "main:app"]

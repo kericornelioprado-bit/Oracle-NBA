@@ -1,0 +1,182 @@
+openapi: 3.0.3
+info:
+  title: Oráculo NBA API
+  description: |
+    API REST del sistema de predicción de apuestas de valor (Value Betting) en la NBA.
+    El servicio ejecuta el pipeline completo de inferencia diaria: extrae partidos del día
+    desde la NBA API, genera probabilidades via Stacking Ensemble (LR + XGBoost),
+    persiste en BigQuery y envía el reporte HTML por email.
+  version: "1.0.0"
+  contact:
+    name: Oráculo NBA
+  license:
+    name: MIT
+
+servers:
+  - url: https://oracle-nba-service-{hash}.a.run.app
+    description: Producción (Cloud Run — us-central1)
+  - url: http://localhost:8080
+    description: Local (via ctl.sh start o Docker)
+
+tags:
+  - name: Oracle
+    description: Pipeline de predicción diaria
+
+paths:
+  /:
+    get:
+      tags: [Oracle]
+      summary: Ejecutar pipeline de predicción
+      description: |
+        Dispara el flujo completo de inferencia diaria:
+        1. Obtiene partidos del día (NBA ScoreboardV2)
+        2. Calcula features de rolling window por equipo
+        3. Genera predicciones con el modelo Stacking v1
+        4. Inserta resultados en BigQuery (`oracle_nba_ds.predictions`)
+        5. Genera reporte HTML y lo envía por Gmail SMTP
+
+        Este endpoint es invocado automáticamente por Cloud Scheduler a las 14:00 UTC.
+      operationId: runOracle
+      responses:
+        "200":
+          description: Ejecución completada (con o sin predicciones)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OracleResponse"
+              examples:
+                success:
+                  summary: Predicciones generadas y enviadas
+                  value:
+                    status: success
+                    message: "Predicciones enviadas"
+                warning:
+                  summary: Sin partidos hoy
+                  value:
+                    status: warning
+                    message: "No se generaron predicciones hoy."
+        "500":
+          description: Error crítico en el pipeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status: error
+                message: "FileNotFoundError: No se encontró el modelo en models/nba_best_model_stacking.joblib"
+
+    post:
+      tags: [Oracle]
+      summary: Ejecutar pipeline de predicción (POST)
+      description: |
+        Idéntico al GET. Acepta POST para compatibilidad con Cloud Scheduler
+        (que envía solicitudes HTTP POST).
+      operationId: runOraclePost
+      responses:
+        "200":
+          $ref: "#/paths/~1/get/responses/200"
+        "500":
+          $ref: "#/paths/~1/get/responses/500"
+
+components:
+  schemas:
+    OracleResponse:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          enum: [success, warning]
+          description: |
+            - `success`: Se generaron predicciones, se insertaron en BQ y se envió el email.
+            - `warning`: No hubo partidos programados o el pipeline no generó predicciones.
+          example: success
+        message:
+          type: string
+          description: Descripción legible del resultado
+          example: "Predicciones enviadas"
+
+    ErrorResponse:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          enum: [error]
+          example: error
+        message:
+          type: string
+          description: Mensaje de la excepción capturada. El traceback completo se envía por email.
+          example: "FileNotFoundError: modelo no encontrado"
+
+    Prediction:
+      type: object
+      description: Predicción generada para un partido del día (fila del DataFrame interno)
+      required: [GAME_ID, HOME_ID, AWAY_ID, PROB_HOME_WIN, RECOMMENDATION]
+      properties:
+        GAME_ID:
+          type: string
+          description: ID único del partido (NBA API)
+          example: "0022300001"
+        HOME_ID:
+          type: integer
+          description: ID del equipo local (NBA API team ID)
+          example: 1610612738
+        AWAY_ID:
+          type: integer
+          description: ID del equipo visitante
+          example: 1610612743
+        PROB_HOME_WIN:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Probabilidad de victoria del equipo local (salida del modelo Stacking)
+          example: 0.5375
+        RECOMMENDATION:
+          type: string
+          enum: [HOME, AWAY, SKIP]
+          description: |
+            Recomendación de apuesta basada en umbral de break-even (odds 1.91):
+            - `HOME`: prob > 0.524
+            - `AWAY`: prob < 0.476
+            - `SKIP`: 0.476 ≤ prob ≤ 0.524
+          example: HOME
+
+    BigQueryRow:
+      type: object
+      description: Esquema de fila insertada en `oracle_nba_ds.predictions`
+      required: [game_id, game_date, home_team_id, away_team_id, prob_home_win, recommendation, timestamp]
+      properties:
+        game_id:
+          type: string
+          example: "0022300001"
+        game_date:
+          type: string
+          format: date
+          example: "2026-03-23"
+        home_team_id:
+          type: integer
+          example: 1610612738
+        away_team_id:
+          type: integer
+          example: 1610612743
+        prob_home_win:
+          type: number
+          format: float
+          example: 0.5375
+        recommendation:
+          type: string
+          enum: [HOME, AWAY, SKIP]
+          example: HOME
+        model_version:
+          type: string
+          example: "stacking_v1"
+        experiment_id:
+          type: string
+          description: MLflow run ID del experimento de entrenamiento
+          example: "a1b2c3d4e5f6"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-03-23T14:05:32.123456"

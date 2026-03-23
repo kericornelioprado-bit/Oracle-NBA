@@ -1,0 +1,63 @@
+name: CD - Deploy Oracle NBA to Google Cloud
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Mandatory Quality Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv pip install -r requirements.txt --system
+          uv pip install pytest pytest-mock python-dotenv --system
+      
+      - name: Run Tests
+        env:
+          PYTHONPATH: .
+        run: |
+          pytest tests/test_email_service.py
+          # La calidad no es negociable: si falla, se detiene el CD.
+
+  deploy:
+    name: Build and Deploy to Cloud Run
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      # 1. Autenticación en Google Cloud
+      - name: Google Auth
+        uses: 'google-github-actions/auth@v1'
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      # 2. Configuración de SDK de Google Cloud
+      - name: Set up Cloud SDK
+        uses: 'google-github-actions/setup-gcloud@v1'
+
+      # 3. Construcción y Subida a Artifact Registry (Docker)
+      - name: Build and Push Container
+        run: |
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          docker build -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/oracle-nba-repo/oracle-nba:${{ github.sha }} .
+          docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/oracle-nba-repo/oracle-nba:${{ github.sha }}
+
+      # 4. Despliegue en Cloud Run
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy oracle-nba-service \
+            --image us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/oracle-nba-repo/oracle-nba:${{ github.sha }} \
+            --region us-central1 \
+            --platform managed \
+            --set-env-vars "GMAIL_USER=${{ secrets.GMAIL_USER }},GMAIL_APP_PASSWORD=${{ secrets.GMAIL_APP_PASSWORD }},GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}" \
+            --quiet

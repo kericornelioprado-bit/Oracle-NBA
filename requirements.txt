@@ -1,15 +1,27 @@
+# Core
 pandas
 numpy
 scikit-learn
+xgboost
+lightgbm
+pyarrow
+joblib
+
+# NBA Data & API
 nba_api
 requests
 python-dotenv
-matplotlib
-seaborn
-jupyter
-xgboost
-lightgbm
-mlflow
-pyarrow
+
+# Google Cloud Platform
 google-cloud-storage
+google-cloud-bigquery
+google-api-core
+google-cloud-core
+
+# ML & Experimentation
+mlflow
 optuna
+
+# Server & Deployment
+flask
+gunicorn

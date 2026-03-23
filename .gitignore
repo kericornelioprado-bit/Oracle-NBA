@@ -37,7 +37,11 @@ data/processed/*
 .env
 
 # Google Cloud Keys and Config
-config/
+# Permitimos config/ pero ignoramos su contenido por defecto excepto model_features.json
+!config/
+config/*
+!config/model_features.json
+!config/package.json
 *.json
 !package.json
 
