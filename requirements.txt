@@ -12,3 +12,4 @@ lightgbm
 mlflow
 pyarrow
 google-cloud-storage
+optuna

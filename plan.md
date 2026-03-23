@@ -38,8 +38,24 @@
   - [x] Identificación de features candidatas (DREB, FG_PCT, AST, TOV)
   - [x] **Verificación**: Reporte generado en data/processed/eda_report.txt
 
-### Sprint 2: Modelado, Backtesting y MLOps [Status: 0%]
-- [ ] **Tarea 1: Pipeline de Entrenamiento Multi-Modelo (HU1)**
-- [ ] **Tarea 2: Validación Temporal y Ponderación (HU2)**
-- [ ] **Tarea 3: Evaluación ROI y EV (HU3)**
-- [ ] **Tarea 4: Tracking con MLflow (HU4)**
+### Sprint 2: Modelado, Backtesting y MLOps [Status: 80%]
+- [x] **Tarea 1: Pipeline de Entrenamiento Multi-Modelo (HU1)**
+- [x] **Tarea 2: Validación Temporal y Ponderación (HU2)**
+- [x] **Tarea 3: Evaluación ROI y EV (HU3)**
+- [x] **Tarea 4: Tracking con MLflow (HU4)**
+
+### Sprint 2.5: Experimentación Avanzada (PM Request) [Status: 100%]
+- [x] **Tarea 1: Tuning Inteligente con Optuna (HU1)**
+  - [x] ROI incrementado al 22.2%.
+- [x] **Tarea 2: Meta-Modelo de Stacking (HU2)**
+  - [x] Accuracy incrementado al 62.9%.
+- [x] **Tarea 3: Ingeniería de Ventanas Dinámicas (HU3)**
+  - [x] **ROI FINAL: 24.29%** | **Win Rate: 65.1%**
+  - [x] Ventanas [3, 5, 10, 20] implementadas.
+
+### Sprint 3: Despliegue y Paper Trading [Status: 33%]
+- [x] **Tarea 1: Pipeline de Inferencia Diaria (HU1)**
+  - [x] Script `inference.py` operativo con live data.
+  - [x] **Verificación**: Cartelera de hoy generada con éxito.
+- [ ] **Tarea 2: Contenerización y Cloud Run (HU2)** [Next]
+- [ ] **Tarea 3: Automatización con Cloud Scheduler (HU3)**
