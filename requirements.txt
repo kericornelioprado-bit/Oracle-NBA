@@ -1,0 +1,14 @@
+pandas
+numpy
+scikit-learn
+nba_api
+requests
+python-dotenv
+matplotlib
+seaborn
+jupyter
+xgboost
+lightgbm
+mlflow
+pyarrow
+google-cloud-storage
