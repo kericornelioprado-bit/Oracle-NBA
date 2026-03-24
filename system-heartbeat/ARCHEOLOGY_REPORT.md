@@ -1,6 +1,6 @@
 # ARCHEOLOGY_REPORT.md
 > Auditoría técnica industrial del repositorio **Oráculo NBA**
-> Fecha: 2026-03-23 | Agente: `/archeology` | Destino: `/factory-lead`
+> Fecha: 2026-03-23 (actualizado) | Agente: `/archeology` | Destino: `/factory-lead`
 
 ---
 

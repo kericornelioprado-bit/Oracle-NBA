@@ -7,6 +7,7 @@ from nba_api.stats.endpoints import scoreboardv2, leaguegamefinder
 from src.data.feature_engineering import NBAFeatureEngineer
 from src.utils.logger import logger
 from datetime import datetime
+from src.utils.odds_api import OddsAPIClient
 
 # Configuración Global de Reintentos para la API de la NBA
 import requests
@@ -19,17 +20,21 @@ class NBAOracleInference:
             raise FileNotFoundError(f"No se encontró el modelo en {model_path}. Entrénalo primero.")
         self.model = joblib.load(model_path)
         self.engineer = NBAFeatureEngineer()
+        self.odds_client = OddsAPIClient()
         
-        # Cabeceras personalizadas para evitar bloqueos
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'x-nba-stats-origin': 'stats',
-            'x-nba-stats-token': 'true',
-            'Referer': 'https://www.nba.com/',
-            'Origin': 'https://www.nba.com',
-            'Connection': 'keep-alive',
-        }
+        # Parámetros financieros (desde ENV o defaults)
+        self.bankroll = float(os.getenv("BANKROLL_VIRTUAL", 1000))
+        self.min_ev = float(os.getenv("MIN_EV_THRESHOLD", 0.02))
+        self.kelly_fraction = float(os.getenv("KELLY_FRACTION", 0.25))
+
+    def calculate_kelly(self, prob, odds):
+        """Calcula el porcentaje de banca a apostar usando Kelly Fraccional."""
+        if odds <= 1 or prob <= 0: return 0
+        # Fórmula: Kelly % = (p * b - q) / b donde b = cuota - 1
+        b = odds - 1
+        q = 1 - prob
+        kelly_full = (prob * b - q) / b
+        return max(0, kelly_full * self.kelly_fraction)
 
     def get_today_games(self):
         """Obtiene los partidos programados para hoy."""
@@ -131,6 +136,13 @@ class NBAOracleInference:
             feature_cols_order = [f'HOME_{c}' for c in raw_cols] + [f'AWAY_{c}' for c in raw_cols]
 
         predictions = []
+        odds_data = self.odds_client.get_latest_odds()
+        
+        # Mapeo de nombres de equipos de The Odds API a IDs de la NBA
+        # (Idealmente esto debería estar en una config externa)
+        from src.utils.report_generator import NBAReportGenerator
+        name_to_id = {v: k for k, v in NBAReportGenerator.TEAM_NAMES.items()}
+
         for _, game in today_games.iterrows():
             home_id = game['HOME_TEAM_ID']
             away_id = game['VISITOR_TEAM_ID']
@@ -148,23 +160,66 @@ class NBAOracleInference:
                 feature_vector[f'HOME_{col}'] = home_features[col].values[0]
                 feature_vector[f'AWAY_{col}'] = away_features[col].values[0]
             
-            # Crear DataFrame y REORDENAR columnas según el entrenamiento
-            X = pd.DataFrame([feature_vector])
-            X = X[feature_cols_order]
+            X = pd.DataFrame([feature_vector])[feature_cols_order]
+            prob_home = self.model.predict_proba(X)[0][1]
+            prob_away = 1 - prob_home
+
+            # Buscar cuotas para este partido
+            best_home_odds = 0
+            best_away_odds = 0
+            best_bookie = "N/A"
             
-            proba = self.model.predict_proba(X)[0][1]
+            if odds_data:
+                home_team_name = NBAReportGenerator.TEAM_NAMES.get(home_id)
+                away_team_name = NBAReportGenerator.TEAM_NAMES.get(away_id)
+                
+                for event in odds_data:
+                    if event['home_team'] == home_team_name:
+                        odds_info = self.odds_client.get_best_odds(event)
+                        best_home_odds = odds_info['best_home_odds']
+                        best_away_odds = odds_info['best_away_odds']
+                        # Usamos la casa de apuestas que de la mejor cuota
+                        best_bookie = odds_info['best_home_bookie'] if prob_home > prob_away else odds_info['best_away_bookie']
+                        break
+
+            # Calcular EV y Kelly
+            ev_home = (prob_home * best_home_odds) - 1 if best_home_odds > 0 else -1
+            ev_away = (prob_away * best_away_odds) - 1 if best_away_odds > 0 else -1
             
+            # Lógica de Recomendación Inteligente
+            recommendation = 'NO BET'
+            final_ev = 0
+            final_odds = 0
+            final_kelly = 0
+            
+            if ev_home > self.min_ev and ev_home > ev_away:
+                recommendation = 'HOME'
+                final_ev = ev_home
+                final_odds = best_home_odds
+                final_kelly = self.calculate_kelly(prob_home, best_home_odds)
+            elif ev_away > self.min_ev:
+                recommendation = 'AWAY'
+                final_ev = ev_away
+                final_odds = best_away_odds
+                final_kelly = self.calculate_kelly(prob_away, best_away_odds)
+
             predictions.append({
                 'GAME_ID': game['GAME_ID'],
                 'HOME_ID': home_id,
                 'AWAY_ID': away_id,
-                'PROB_HOME_WIN': proba,
-                'RECOMMENDATION': 'HOME' if proba > 0.524 else ('AWAY' if proba < 0.476 else 'SKIP')
+                'PROB_HOME_WIN': prob_home,
+                'ODDS': final_odds,
+                'EV': final_ev,
+                'KELLY_PCT': final_kelly,
+                'UNITS_SUGGESTED': final_kelly * self.bankroll,
+                'BOOKMAKER': best_bookie,
+                'RECOMMENDATION': recommendation
             })
 
         result_df = pd.DataFrame(predictions)
-        print("\n=== CARTELERA DE APUESTAS DEL DÍA (ORÁCULO NBA) ===")
-        print(result_df[['HOME_ID', 'AWAY_ID', 'PROB_HOME_WIN', 'RECOMMENDATION']])
+        logger.info("\n=== REPORTE DE VALOR ESPERADO (v2) ===")
+        if not result_df.empty:
+            print(result_df[['HOME_ID', 'AWAY_ID', 'PROB_HOME_WIN', 'EV', 'KELLY_PCT', 'RECOMMENDATION']])
         return result_df
 
 if __name__ == "__main__":

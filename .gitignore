@@ -52,3 +52,12 @@ config/*
 
 # Docker
 *.log
+
+# MLflow artifacts (keep directory structure, ignore DB and runs)
+data/mlflow/mlflow.db
+data/mlflow/mlruns/
+
+# Test & Coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/

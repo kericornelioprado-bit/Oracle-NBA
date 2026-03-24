@@ -221,11 +221,12 @@ def test_predict_today_recommendation_home(tmp_path):
         result = oracle.predict_today()
 
     if result is not None and len(result) > 0:
-        assert result.iloc[0]['RECOMMENDATION'] == 'HOME'
+        # En v2, sin cuotas (EV=0), la recomendación es NO BET
+        assert result.iloc[0]['RECOMMENDATION'] == 'NO BET'
 
 
 def test_predict_today_recommendation_away(tmp_path):
-    """Probabilidad < 0.476 debe generar recomendación AWAY."""
+    """Sin cuotas reales, incluso con probabilidad baja para el local, debe ser NO BET."""
     mock_model = MagicMock()
     fake_model_path = tmp_path / "fake_model.joblib"
     fake_model_path.touch()
@@ -239,6 +240,7 @@ def test_predict_today_recommendation_away(tmp_path):
     history = make_history_df(team_ids)
     features_parquet = make_processed_features_parquet(tmp_path, team_ids)
 
+    # Probabilidad de victoria local baja (0.35) -> Prob visitante alta (0.65)
     mock_model.predict_proba.return_value = np.array([[0.65, 0.35]])
 
     with patch('joblib.load', return_value=mock_model):
@@ -251,4 +253,5 @@ def test_predict_today_recommendation_away(tmp_path):
         result = oracle.predict_today()
 
     if result is not None and len(result) > 0:
-        assert result.iloc[0]['RECOMMENDATION'] == 'AWAY'
+        # Sin cuotas (EV=0), la recomendación es NO BET
+        assert result.iloc[0]['RECOMMENDATION'] == 'NO BET'

@@ -95,8 +95,15 @@ Error path: `send_error_alert()` emails full traceback and returns HTTP 500.
 ### Model Artifacts
 
 - `models/nba_best_model_stacking.joblib` — production model (do not delete)
+- `models/archive/` — obsolete model versions (v1 base, v2 tuned); kept for reference only
 - `data/processed/nba_games_features.parquet` — feature-engineered dataset
 - `config/model_features.json` — ordered feature list used at inference time (versioned in git)
+
+### Documentation
+
+- `docs/planning/` — planning docs: `plan.md`, `research.md`, `Sprints.md`, `proyectoinicial.md`
+- `docs/api/`, `docs/architecture/`, `docs/infrastructure/` — technical specs and diagrams
+- `system-heartbeat/evidence/test-evidence.md` — test coverage evidence
 
 ## Environment Variables
 

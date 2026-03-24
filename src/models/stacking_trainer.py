@@ -43,6 +43,7 @@ class NBAStackingTrainer:
     def train_and_evaluate(self):
         X_train, X_test, y_train, y_test, _ = self.trainer.prepare_data()
         
+        mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "sqlite:///data/mlflow/mlflow.db"))
         mlflow.set_experiment("NBA_Oracle_Stacking_Ensemble")
         
         with mlflow.start_run(run_name="Stacking_LR_XGBoost"):

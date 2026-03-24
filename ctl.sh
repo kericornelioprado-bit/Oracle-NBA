@@ -29,6 +29,7 @@ start() {
     # Comando de arranque: Inferencia diaria + Reporte
     # Usamos export PYTHONPATH=. para que reconozca el módulo 'src'
     export PYTHONPATH=.
+    export MLFLOW_TRACKING_URI="${MLFLOW_TRACKING_URI:-sqlite:///data/mlflow/mlflow.db}"
     nohup uv run python3 main.py > "$LOG_FILE" 2>&1 &
     
     NEW_PID=$!

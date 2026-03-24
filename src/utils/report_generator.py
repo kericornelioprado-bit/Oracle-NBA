@@ -38,7 +38,7 @@ class NBAReportGenerator:
 
     @staticmethod
     def generate_html_report(predictions_df):
-        """Genera un reporte HTML visualmente atractivo con nombres de equipos."""
+        """Genera un reporte HTML visualmente atractivo con métricas de Value Betting."""
         if predictions_df is None or predictions_df.empty:
             return "<p>No hay partidos programados para hoy.</p>"
         
@@ -46,46 +46,74 @@ class NBAReportGenerator:
         <html>
         <head>
             <style>
-                table {{ border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }}
-                th, td {{ border: 1px solid #dddddd; text-align: left; padding: 12px; }}
+                table {{ border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 14px; }}
+                th, td {{ border: 1px solid #dddddd; text-align: center; padding: 10px; }}
                 th {{ background-color: #0d1b2a; color: white; }}
-                tr:nth-child(even) {{ background-color: #f2f2f2; }}
-                .recommendation-HOME {{ color: green; font-weight: bold; }}
-                .recommendation-AWAY {{ color: blue; font-weight: bold; }}
-                .recommendation-SKIP {{ color: gray; }}
+                tr:nth-child(even) {{ background-color: #f8f9fa; }}
+                .recommendation-HOME {{ background-color: #d4edda; color: #155724; font-weight: bold; }}
+                .recommendation-AWAY {{ background-color: #cce5ff; color: #004085; font-weight: bold; }}
+                .recommendation-NO_BET {{ color: #6c757d; font-style: italic; }}
+                .value-high {{ color: #28a745; font-weight: bold; }}
+                .header-container {{ background: #1d3557; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }}
             </style>
         </head>
         <body>
-            <h2>🏀 Cartelera de Apuestas del Día - {datetime.now().strftime('%Y-%m-%d')}</h2>
+            <div class="header-container">
+                <h1 style="margin:0;">🏀 Oráculo NBA v2: Value Betting Report</h1>
+                <p style="margin:5px 0 0 0;">Fecha: {datetime.now().strftime('%d/%m/%Y')} | Banca Virtual: $1,000 USD</p>
+            </div>
             <table>
                 <tr>
                     <th>Local</th>
                     <th>Visitante</th>
-                    <th>Prob. Victoria Local</th>
+                    <th>Prob. Modelo</th>
+                    <th>Mejor Cuota</th>
+                    <th>Casa de Apuestas</th>
+                    <th>Expected Value (EV)</th>
+                    <th>Asignación Kelly</th>
+                    <th>Inversión Sugerida</th>
                     <th>Recomendación</th>
                 </tr>
         """
 
         for _, row in predictions_df.iterrows():
-            rec_class = f"recommendation-{row['RECOMMENDATION']}"
+            rec = row['RECOMMENDATION']
+            rec_class = f"recommendation-{rec.replace(' ', '_')}"
             
-            # Obtener nombres (si el ID no existe por alguna razón, se muestra el ID)
             home_name = NBAReportGenerator.TEAM_NAMES.get(int(row['HOME_ID']), str(row['HOME_ID']))
             away_name = NBAReportGenerator.TEAM_NAMES.get(int(row['AWAY_ID']), str(row['AWAY_ID']))
+            
+            # Formateo de valores
+            prob_pct = f"{row['PROB_HOME_WIN']:.1%}" if rec == 'HOME' else f"{1-row['PROB_HOME_WIN']:.1%}"
+            ev_pct = f"{row['EV']:.2%}"
+            kelly_pct = f"{row['KELLY_PCT']:.2%}"
+            units = f"${row['UNITS_SUGGESTED']:.2f}"
+            odds = f"{row['ODDS']:.2f}" if row['ODDS'] > 0 else "N/A"
             
             html += f"""
                 <tr>
                     <td>{home_name}</td>
                     <td>{away_name}</td>
-                    <td>{row['PROB_HOME_WIN']:.2%}</td>
-                    <td class="{rec_class}">{row['RECOMMENDATION']}</td>
+                    <td>{prob_pct}</td>
+                    <td><b>{odds}</b></td>
+                    <td>{row['BOOKMAKER']}</td>
+                    <td class="value-high">{ev_pct}</td>
+                    <td>{kelly_pct}</td>
+                    <td><mark>{units}</mark></td>
+                    <td class="{rec_class}">{rec}</td>
                 </tr>
             """
 
         html += """
             </table>
             <br>
-            <p><i>Este es un sistema automatizado (Oráculo NBA v2). Juega con responsabilidad.</i></p>
+            <div style="font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
+                <p><b>Glosario:</b><br>
+                - <b>EV:</b> Ventaja matemática sobre la casa de apuestas.<br>
+                - <b>Kelly:</b> Gestión de banca fraccional (0.25) para maximizar crecimiento logarítmico.<br>
+                - <b>Banca Virtual:</b> Proyección basada en un capital inicial de $1,000 USD.</p>
+                <p><i>Disclaimer: Este reporte es informativo. Las apuestas deportivas conllevan riesgo.</i></p>
+            </div>
         </body>
         </html>
         """

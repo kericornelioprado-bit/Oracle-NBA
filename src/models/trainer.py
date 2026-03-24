@@ -36,6 +36,7 @@ class NBAModelTrainer:
         X_train, X_test, y_train, y_test, feature_cols = self.prepare_data()
         
         # Configurar MLflow
+        mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "sqlite:///data/mlflow/mlflow.db"))
         mlflow.set_experiment("NBA_Oracle_Predictive_Model")
 
         for name, model in self.models.items():
@@ -83,10 +84,6 @@ class NBAModelTrainer:
     def save_temp_model(self, model):
         os.makedirs("models", exist_ok=True)
         joblib.dump(model, "models/temp_model.joblib")
-
-if __name__ == "__main__":
-    trainer = NBAModelTrainer()
-    trainer.train_and_evaluate()
 
 if __name__ == "__main__":
     trainer = NBAModelTrainer()

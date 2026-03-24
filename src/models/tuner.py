@@ -40,6 +40,7 @@ class NBAHyperTuner:
     def run_tuning(self, n_trials=20):
         logger.info(f"Iniciando optimización Bayesiana con Optuna ({n_trials} trials)...")
         
+        mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "sqlite:///data/mlflow/mlflow.db"))
         mlflow.set_experiment("NBA_Oracle_Optuna_Tuning")
         
         study = optuna.create_study(direction='minimize')

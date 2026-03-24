@@ -53,9 +53,22 @@
   - [x] **ROI FINAL: 24.29%** | **Win Rate: 65.1%**
   - [x] Ventanas [3, 5, 10, 20] implementadas.
 
-### Sprint 3: Despliegue y Paper Trading [Status: 33%]
+### Sprint 3: Despliegue y Paper Trading [Status: 100%]
 - [x] **Tarea 1: Pipeline de Inferencia Diaria (HU1)**
   - [x] Script `inference.py` operativo con live data.
-  - [x] **Verificación**: Cartelera de hoy generada con éxito.
-- [ ] **Tarea 2: Contenerización y Cloud Run (HU2)** [Next]
-- [ ] **Tarea 3: Automatización con Cloud Scheduler (HU3)**
+- [x] **Tarea 2: Contenerización y Cloud Run (HU2)**
+  - [x] Dockerfile y CI/CD implementados.
+- [x] **Tarea 3: Automatización con Cloud Scheduler (HU3)**
+  - [x] Flujo de email programado y persistencia en BigQuery.
+
+### Sprint 4: Value Betting & Capital Management (v2) [Status: 100%]
+- [x] **Tarea 1: Integración de Cuotas Reales (HU1)**
+  - [x] Módulo `odds_api.py` creado con *Line Shopping* (Bet365, Betway, Pinnacle).
+- [x] **Tarea 2: Motor de Valor Esperado (HU2)**
+  - [x] Cálculo dinámico de EV y filtro de seguridad > 2% en `inference.py`.
+- [x] **Tarea 3: Gestión de Riesgo Kelly (HU3)**
+  - [x] Implementación de Fraction Kelly (0.25) para sizing de apuestas.
+- [x] **Tarea 4: UX de Inversión (HU4)**
+  - [x] Nuevo reporte HTML financiero (Banca virtual de $1,000 USD, métricas y colores dinámicos).
+- [x] **Tarea 5: Orquestación Estratégica (HU5)**
+  - [x] Ventana dorada establecida para ejecución óptima.
