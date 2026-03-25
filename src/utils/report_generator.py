@@ -60,7 +60,7 @@ class NBAReportGenerator:
         <body>
             <div class="header-container">
                 <h1 style="margin:0;">🏀 Oráculo NBA v2: Value Betting Report</h1>
-                <p style="margin:5px 0 0 0;">Fecha: {datetime.now().strftime('%d/%m/%Y')} | Banca Virtual: $1,000 USD</p>
+                <p style="margin:5px 0 0 0;">Fecha: {datetime.now().strftime('%d/%m/%Y')} | Banca Virtual de Paper Trading: $20,000 USD</p>
             </div>
             <table>
                 <tr>
@@ -111,7 +111,7 @@ class NBAReportGenerator:
                 <p><b>Glosario:</b><br>
                 - <b>EV:</b> Ventaja matemática sobre la casa de apuestas.<br>
                 - <b>Kelly:</b> Gestión de banca fraccional (0.25) para maximizar crecimiento logarítmico.<br>
-                - <b>Banca Virtual:</b> Proyección basada en un capital inicial de $1,000 USD.</p>
+                - <b>Banca Virtual:</b> Simulación basada en un capital ficticio inicial de $20,000 USD para Paper Trading.</p>
                 <p><i>Disclaimer: Este reporte es informativo. Las apuestas deportivas conllevan riesgo.</i></p>
             </div>
         </body>

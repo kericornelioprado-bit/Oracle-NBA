@@ -31,14 +31,38 @@ class OddsAPIClient:
         }
         
         try:
-            logger.info("Consultando The Odds API...")
+            logger.info("Consultando The Odds API (Moneyline)...")
             response = requests.get(self.BASE_URL, params=params, timeout=20)
             response.raise_for_status()
             data = response.json()
-            logger.info(f"Se obtuvieron cuotas para {len(data)} eventos.")
+            logger.info(f"Se obtuvieron cuotas ML para {len(data)} eventos.")
             return data
         except Exception as e:
             logger.error(f"Error al consultar The Odds API: {e}")
+            return None
+
+    def get_player_props(self, event_id, markets="player_rebounds,player_assists"):
+        """Obtiene las cuotas de Player Props para un evento específico."""
+        if not self.api_key:
+            return None
+            
+        # El endpoint para props requiere el event_id
+        url = f"https://api.the-odds-api.com/v4/sports/basketball_nba/events/{event_id}/odds"
+        params = {
+            "apiKey": self.api_key,
+            "regions": "us,eu",
+            "markets": markets,
+            "oddsFormat": "decimal",
+            "bookmakers": ",".join(self.bookmakers)
+        }
+        
+        try:
+            logger.info(f"Consultando Props para evento {event_id}...")
+            response = requests.get(url, params=params, timeout=20)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error al consultar Props para {event_id}: {e}")
             return None
 
     @staticmethod

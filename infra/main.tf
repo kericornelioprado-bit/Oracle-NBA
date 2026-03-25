@@ -123,8 +123,8 @@ resource "google_cloud_run_v2_service" "default" {
 resource "google_cloud_scheduler_job" "daily_job" {
   name             = "oracle-nba-daily-trigger"
   description      = "Disparador diario para predicciones NBA"
-  schedule         = "0 14 * * *"
-  time_zone        = "UTC"
+  schedule         = "30 16 * * *"
+  time_zone        = "America/Chicago"
   attempt_deadline = "320s"
   project          = var.project_id
   region           = var.region
@@ -136,6 +136,112 @@ resource "google_cloud_scheduler_job" "daily_job" {
   http_target {
     http_method = "POST"
     uri         = google_cloud_run_v2_service.default.uri
+    oidc_token {
+      service_account_email = google_service_account.cloud_run_sa.email
+    }
+  }
+}
+
+# 6. PERMISOS: Permitir que la SA invoque Cloud Run (Arregla error 401)
+resource "google_cloud_run_v2_service_iam_member" "invoker" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.default.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.cloud_run_sa.email}"
+}
+
+# --- NUEVA INFRAESTRUCTURA V2 (SPRINTS 4 Y 5) ---
+
+resource "google_bigquery_dataset" "oracle_v2_ds" {
+  dataset_id                  = "oracle_nba_v2"
+  friendly_name               = "NBA Props V2 Dataset"
+  description                 = "Almacena bankroll, historial y portafolio de V2"
+  location                    = var.region
+  delete_contents_on_destroy  = false
+}
+
+resource "google_bigquery_table" "virtual_bankroll_table" {
+  dataset_id = google_bigquery_dataset.oracle_v2_ds.dataset_id
+  table_id   = "virtual_bankroll"
+  deletion_protection = false
+
+  schema = <<EOF
+[
+  {"name": "current_balance", "type": "FLOAT64", "mode": "REQUIRED", "description": "Saldo actual en USD"},
+  {"name": "last_updated", "type": "TIMESTAMP", "mode": "REQUIRED", "description": "Última fecha de modificación"}
+]
+EOF
+}
+
+resource "google_bigquery_table" "bet_history_table" {
+  dataset_id = google_bigquery_dataset.oracle_v2_ds.dataset_id
+  table_id   = "bet_history"
+  deletion_protection = false
+
+  schema = <<EOF
+[
+  {"name": "bet_id", "type": "STRING", "mode": "REQUIRED", "description": "UUID de la apuesta"},
+  {"name": "player_name", "type": "STRING", "mode": "REQUIRED", "description": "Nombre del jugador"},
+  {"name": "market", "type": "STRING", "mode": "REQUIRED", "description": "Mercado (REB, AST)"},
+  {"name": "line", "type": "FLOAT64", "mode": "REQUIRED", "description": "Línea de la casa"},
+  {"name": "odds_open", "type": "FLOAT64", "mode": "REQUIRED", "description": "Cuota al apostar"},
+  {"name": "odds_close", "type": "FLOAT64", "mode": "NULLABLE", "description": "Cuota de cierre (CLV)"},
+  {"name": "stake_usd", "type": "FLOAT64", "mode": "REQUIRED", "description": "Monto apostado"},
+  {"name": "result", "type": "STRING", "mode": "REQUIRED", "description": "PENDING/WIN/LOSS"},
+  {"name": "payout", "type": "FLOAT64", "mode": "REQUIRED", "description": "Retorno neto"},
+  {"name": "timestamp", "type": "TIMESTAMP", "mode": "REQUIRED", "description": "Momento de inserción"}
+]
+EOF
+}
+
+resource "google_bigquery_table" "top_20_portfolio_table" {
+  dataset_id = google_bigquery_dataset.oracle_v2_ds.dataset_id
+  table_id   = "top_20_portfolio"
+  deletion_protection = false
+
+  schema = <<EOF
+[
+  {"name": "tier", "type": "INTEGER", "mode": "REQUIRED", "description": "Tier del jugador"},
+  {"name": "player_id", "type": "INTEGER", "mode": "REQUIRED", "description": "ID NBA"},
+  {"name": "minute_swing", "type": "FLOAT64", "mode": "REQUIRED", "description": "Sensibilidad al margen"},
+  {"name": "updated_at", "type": "TIMESTAMP", "mode": "REQUIRED", "description": "Fecha de actualización"}
+]
+EOF
+}
+
+# Job de Liquidación (03:00 AM)
+resource "google_cloud_scheduler_job" "settle_bets_job" {
+  name             = "oracle-nba-settle-bets"
+  description      = "Liquida apuestas del día anterior y actualiza Bankroll"
+  schedule         = "0 3 * * *"
+  time_zone        = "America/Chicago"
+  attempt_deadline = "320s"
+  project          = var.project_id
+  region           = var.region
+
+  http_target {
+    http_method = "POST"
+    uri         = "${google_cloud_run_v2_service.default.uri}/settle"
+    oidc_token {
+      service_account_email = google_service_account.cloud_run_sa.email
+    }
+  }
+}
+
+# Job del Portafolio (Domingos 23:59)
+resource "google_cloud_scheduler_job" "sunday_update_job" {
+  name             = "oracle-nba-sunday-update"
+  description      = "Recalcula el Top 20 semanalmente"
+  schedule         = "59 23 * * 0"
+  time_zone        = "America/Chicago"
+  attempt_deadline = "320s"
+  project          = var.project_id
+  region           = var.region
+
+  http_target {
+    http_method = "POST"
+    uri         = "${google_cloud_run_v2_service.default.uri}/update_portfolio"
     oidc_token {
       service_account_email = google_service_account.cloud_run_sa.email
     }

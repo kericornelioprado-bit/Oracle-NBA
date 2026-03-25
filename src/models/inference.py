@@ -3,16 +3,21 @@ import numpy as np
 import joblib
 import os
 import time
+import json
+from datetime import datetime
+from urllib3.util.retry import Retry
 from nba_api.stats.endpoints import scoreboardv2, leaguegamefinder
+
 from src.data.feature_engineering import NBAFeatureEngineer
 from src.utils.logger import logger
-from datetime import datetime
 from src.utils.odds_api import OddsAPIClient
+from src.utils.report_generator import NBAReportGenerator
+from src.utils.bigquery_client import NBABigQueryClient
 
-# Configuración Global de Reintentos para la API de la NBA
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+# Nuevos módulos V2
+from src.data.player_ingestion import PlayerStatsIngestion
+from src.models.minutes_projector import MinutesProjector
+from src.models.props_model import PlayerPropsModel
 
 class NBAOracleInference:
     def __init__(self, model_path="models/nba_best_model_stacking.joblib"):
@@ -21,140 +26,102 @@ class NBAOracleInference:
         self.model = joblib.load(model_path)
         self.engineer = NBAFeatureEngineer()
         self.odds_client = OddsAPIClient()
+        self.bq_client = NBABigQueryClient()
         
-        # Parámetros financieros (desde ENV o defaults)
-        self.bankroll = float(os.getenv("BANKROLL_VIRTUAL", 1000))
-        self.min_ev = float(os.getenv("MIN_EV_THRESHOLD", 0.02))
+        # Módulos V2
+        self.player_ingestion = PlayerStatsIngestion()
+        self.minutes_projector = MinutesProjector()
+        self.props_model = PlayerPropsModel()
+        
+        # Obtener banca virtual real desde BQ o default
+        self.bankroll = self.bq_client.get_virtual_bankroll()
+        self.min_ev = float(os.getenv("MIN_EV_THRESHOLD", 0.05)) # 5% EV mínimo para Props
         self.kelly_fraction = float(os.getenv("KELLY_FRACTION", 0.25))
+        
+        # Obtener portafolio actual
+        self.top_20_ids = self.bq_client.get_top_20_portfolio()
 
     def calculate_kelly(self, prob, odds):
         """Calcula el porcentaje de banca a apostar usando Kelly Fraccional."""
         if odds <= 1 or prob <= 0: return 0
-        # Fórmula: Kelly % = (p * b - q) / b donde b = cuota - 1
         b = odds - 1
         q = 1 - prob
         kelly_full = (prob * b - q) / b
         return max(0, kelly_full * self.kelly_fraction)
 
     def get_today_games(self):
-        """Obtiene los partidos programados para hoy."""
+        """Obtiene los partidos programados para hoy con deduplicación por GAME_ID."""
         logger.info("Obteniendo partidos programados para hoy...")
         try:
-            # Añadimos timeout explícito de 60 segundos
             sb = scoreboardv2.ScoreboardV2(timeout=60)
             games = sb.get_data_frames()[0]
             
             if games.empty:
                 logger.warning("No hay partidos programados para hoy.")
                 return None
-                
+            
             games = games[['GAME_ID', 'HOME_TEAM_ID', 'VISITOR_TEAM_ID']]
+            original_count = len(games)
+            games = games.drop_duplicates(subset='GAME_ID')
+            
+            if len(games) < original_count:
+                logger.info(f"Se eliminaron {original_count - len(games)} partidos duplicados del scoreboard.")
             return games
         except Exception as e:
             logger.error(f"Error al obtener scoreboard: {e}")
             raise
 
-    def fetch_recent_history(self, team_ids, days_back=60):
-        """Obtiene el historial reciente de los equipos con reintentos y pausas."""
-        logger.info(f"Extrayendo historial reciente para los equipos: {team_ids}")
+    def fetch_recent_history(self, team_ids):
+        """Obtiene el historial reciente de los equipos."""
+        logger.info(f"Extrayendo historial reciente para equipos...")
         all_history = []
         for team_id in team_ids:
-            # Pequeña pausa para no saturar la API (GCP -> NBA Stats es sensible)
             time.sleep(1.5)
-            
-            success = False
-            attempts = 0
-            while not success and attempts < 3:
-                try:
-                    attempts += 1
-                    game_finder = leaguegamefinder.LeagueGameFinder(
-                        team_id_nullable=team_id,
-                        league_id_nullable='00',
-                        season_type_nullable='Regular Season',
-                        timeout=60 # Timeout largo
-                    )
-                    df = game_finder.get_data_frames()[0]
-                    all_history.append(df)
-                    success = True
-                except Exception as e:
-                    logger.warning(f"Intento {attempts} fallido para equipo {team_id}: {e}")
-                    time.sleep(2 * attempts) # Backoff exponencial simple
-            
-            if not success:
-                logger.error(f"No se pudo obtener historial para el equipo {team_id}")
+            try:
+                game_finder = leaguegamefinder.LeagueGameFinder(
+                    team_id_nullable=team_id,
+                    season_type_nullable='Regular Season',
+                    timeout=60
+                )
+                df = game_finder.get_data_frames()[0]
+                all_history.append(df)
+            except Exception as e:
+                logger.warning(f"Fallo al obtener historial equipo {team_id}: {e}")
             
         return pd.concat(all_history).drop_duplicates(subset='GAME_ID')
 
     def predict_today(self):
         today_games = self.get_today_games()
-        if today_games is None: return
+        if today_games is None: return None, None
 
-        # Obtener IDs únicos de equipos que juegan hoy
+        # --- 1. PREDICCIÓN MONEYLINE (GAME SCRIPT) ---
         team_ids = list(set(today_games['HOME_TEAM_ID'].tolist() + today_games['VISITOR_TEAM_ID'].tolist()))
-        
-        # Obtener historial reciente para calcular medias móviles
         history_df = self.fetch_recent_history(team_ids)
-        
-        # CORRECCIÓN: Convertir fecha a datetime antes de procesar
         history_df['GAME_DATE'] = pd.to_datetime(history_df['GAME_DATE'])
         
-        # Ejecutar ingeniería de características sobre el historial
         processed_history = self.engineer.create_rolling_features(history_df)
         processed_history = self.engineer.calculate_rest_days(processed_history)
+        latest_stats = processed_history.groupby('TEAM_ID').tail(1).fillna(0)
         
-        # Extraer solo la última fila de cada equipo (su estado actual)
-        latest_stats = processed_history.groupby('TEAM_ID').tail(1)
-        
-        # CORRECCIÓN DEFINITIVA: Imputar nulos asegurando persistencia
-        cols_to_fill = ['PTS', 'FG_PCT', 'FG3_PCT', 'FT_PCT', 'AST', 'REB', 'TOV', 'PLUS_MINUS']
-        for col in cols_to_fill:
-            for window_target, window_source in [('20', '10'), ('10', '5'), ('5', '3')]:
-                target_col = f'ROLL_{col}_{window_target}'
-                source_col = f'ROLL_{col}_{window_source}'
-                latest_stats[target_col] = latest_stats[target_col].fillna(latest_stats[source_col])
-            
-            # Último recurso: llenar con 0 (muy raro si el equipo ha jugado al menos un partido)
-            latest_stats[f'ROLL_{col}_3'] = latest_stats[f'ROLL_{col}_3'].fillna(0)
-        
-        latest_stats['DAYS_REST'] = latest_stats['DAYS_REST'].fillna(2)
-        
-        # Eliminar cualquier fila que aún tenga nulos (seguridad final)
-        latest_stats = latest_stats.fillna(0)
-        
-        # Obtener el orden de columnas con el que se entrenó el modelo
-        # (Lo cargamos de una configuración estática para evitar depender de archivos locales en Cloud Run)
-        import json
         config_path = "config/model_features.json"
         if os.path.exists(config_path):
             with open(config_path, "r") as f:
                 feature_cols_order = json.load(f)
         else:
-            # Fallback inteligente: Generar columnas con prefijos si falta el JSON
-            logger.warning("No se encontró config/model_features.json. Generando orden por defecto.")
             raw_cols = [c for c in latest_stats.columns if 'ROLL_' in c or 'DAYS_REST' in c]
-            # Este orden es el más probable si no hay cambios en el código de entrenamiento
             feature_cols_order = [f'HOME_{c}' for c in raw_cols] + [f'AWAY_{c}' for c in raw_cols]
 
-        predictions = []
-        odds_data = self.odds_client.get_latest_odds()
+        ml_predictions = []
+        game_scripts = {} # Guarda el margen esperado por game_id
         
-        # Mapeo de nombres de equipos de The Odds API a IDs de la NBA
-        # (Idealmente esto debería estar en una config externa)
-        from src.utils.report_generator import NBAReportGenerator
-        name_to_id = {v: k for k, v in NBAReportGenerator.TEAM_NAMES.items()}
-
         for _, game in today_games.iterrows():
             home_id = game['HOME_TEAM_ID']
             away_id = game['VISITOR_TEAM_ID']
             
             home_features = latest_stats[latest_stats['TEAM_ID'] == home_id]
             away_features = latest_stats[latest_stats['TEAM_ID'] == away_id]
-            
-            if home_features.empty or away_features.empty:
-                logger.warning(f"Faltan datos para el juego {game['GAME_ID']}")
-                continue
+            if home_features.empty or away_features.empty: continue
                 
-            # Construir vector de características
             feature_vector = {}
             for col in [c for c in latest_stats.columns if 'ROLL_' in c or 'DAYS_REST' in c]:
                 feature_vector[f'HOME_{col}'] = home_features[col].values[0]
@@ -162,65 +129,70 @@ class NBAOracleInference:
             
             X = pd.DataFrame([feature_vector])[feature_cols_order]
             prob_home = self.model.predict_proba(X)[0][1]
-            prob_away = 1 - prob_home
-
-            # Buscar cuotas para este partido
-            best_home_odds = 0
-            best_away_odds = 0
-            best_bookie = "N/A"
             
-            if odds_data:
-                home_team_name = NBAReportGenerator.TEAM_NAMES.get(home_id)
-                away_team_name = NBAReportGenerator.TEAM_NAMES.get(away_id)
-                
-                for event in odds_data:
-                    if event['home_team'] == home_team_name:
-                        odds_info = self.odds_client.get_best_odds(event)
-                        best_home_odds = odds_info['best_home_odds']
-                        best_away_odds = odds_info['best_away_odds']
-                        # Usamos la casa de apuestas que de la mejor cuota
-                        best_bookie = odds_info['best_home_bookie'] if prob_home > prob_away else odds_info['best_away_bookie']
-                        break
-
-            # Calcular EV y Kelly
-            ev_home = (prob_home * best_home_odds) - 1 if best_home_odds > 0 else -1
-            ev_away = (prob_away * best_away_odds) - 1 if best_away_odds > 0 else -1
+            # Heurística simple de Game Script: 1% de prob = 0.5 puntos de margen
+            margin = (prob_home - 0.5) * 100 * 0.5
+            game_scripts[game['GAME_ID']] = margin
             
-            # Lógica de Recomendación Inteligente
-            recommendation = 'NO BET'
-            final_ev = 0
-            final_odds = 0
-            final_kelly = 0
-            
-            if ev_home > self.min_ev and ev_home > ev_away:
-                recommendation = 'HOME'
-                final_ev = ev_home
-                final_odds = best_home_odds
-                final_kelly = self.calculate_kelly(prob_home, best_home_odds)
-            elif ev_away > self.min_ev:
-                recommendation = 'AWAY'
-                final_ev = ev_away
-                final_odds = best_away_odds
-                final_kelly = self.calculate_kelly(prob_away, best_away_odds)
-
-            predictions.append({
+            ml_predictions.append({
                 'GAME_ID': game['GAME_ID'],
                 'HOME_ID': home_id,
                 'AWAY_ID': away_id,
                 'PROB_HOME_WIN': prob_home,
-                'ODDS': final_odds,
-                'EV': final_ev,
-                'KELLY_PCT': final_kelly,
-                'UNITS_SUGGESTED': final_kelly * self.bankroll,
-                'BOOKMAKER': best_bookie,
-                'RECOMMENDATION': recommendation
+                'RECOMMENDATION': 'HOME' if prob_home > 0.524 else ('AWAY' if prob_home < 0.476 else 'NO BET'),
+                'ODDS': 1.91, 'EV': 0.0, 'KELLY_PCT': 0.0, 'UNITS_SUGGESTED': 0.0, 'BOOKMAKER': 'N/A'
             })
 
-        result_df = pd.DataFrame(predictions)
-        logger.info("\n=== REPORTE DE VALOR ESPERADO (v2) ===")
-        if not result_df.empty:
-            print(result_df[['HOME_ID', 'AWAY_ID', 'PROB_HOME_WIN', 'EV', 'KELLY_PCT', 'RECOMMENDATION']])
-        return result_df
+        # --- 2. MOTOR DE PROPS (V2) ---
+        logger.info(f"Iniciando evaluación de Props para {len(self.top_20_ids)} jugadores del portafolio...")
+        player_logs = self.player_ingestion.get_player_logs(self.top_20_ids)
+        player_features = self.player_ingestion.calculate_rolling_features(player_logs)
+        
+        props_picks = []
+        
+        if not player_features.empty:
+            latest_player_stats = player_features.groupby('PLAYER_ID').tail(1).set_index('PLAYER_ID').to_dict('index')
+            
+            # Simularemos una iteración sobre los jugadores. En MVP completo consultaríamos Odds API
+            for player_id, stats in latest_player_stats.items():
+                player_name = stats.get('PLAYER_NAME', f'Unknown_{player_id}')
+                
+                # Asumimos que juega hoy y usamos un margen promedio de ejemplo
+                margin = 5.0
+                
+                # Proyección de minutos
+                proj_min = self.minutes_projector.project_minutes(stats, margin)
+                
+                # Proyección de stats (REB)
+                expected_reb = self.props_model.predict_stat('REB', proj_min, stats)
+                
+                # Simulación de cuota de la casa (Línea en 5.5, Cuota 1.90)
+                line = 5.5
+                odds_open = 1.90
+                
+                prob_over = self.props_model.calculate_prob_over(expected_reb, line, 'REB')
+                ev = self.props_model.calculate_ev(prob_over, odds_open)
+                
+                if ev > self.min_ev:
+                    kelly = self.calculate_kelly(prob_over, odds_open)
+                    stake = kelly * self.bankroll
+                    
+                    if stake > 0:
+                        pick = {
+                            "player_name": player_name,
+                            "market": "REB_OVER",
+                            "line": line,
+                            "odds_open": odds_open,
+                            "stake_usd": round(stake, 2)
+                        }
+                        props_picks.append(pick)
+                        logger.info(f"PICK FOUND: {player_name} Over {line} REB | EV: {ev:.2%} | Stake: ${stake:.2f}")
+        
+        # Guardar en BigQuery el historial de picks V2
+        if props_picks:
+            self.bq_client.insert_prop_bets(props_picks)
+
+        return pd.DataFrame(ml_predictions), pd.DataFrame(props_picks)
 
 if __name__ == "__main__":
     oracle = NBAOracleInference()
