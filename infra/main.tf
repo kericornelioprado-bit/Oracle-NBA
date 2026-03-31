@@ -229,19 +229,19 @@ resource "google_cloud_scheduler_job" "settle_bets_job" {
   }
 }
 
-# Job de Confirmación Vespertina (07:40 PM)
-resource "google_cloud_scheduler_job" "evening_confirmation_job" {
-  name             = "oracle-nba-evening-check"
-  description      = "Disparo de confirmación vespertina"
-  schedule         = "40 19 * * *"
-  time_zone        = "America/Mexico_City"
+# Job del Portafolio (Domingos 23:59)
+resource "google_cloud_scheduler_job" "sunday_update_job" {
+  name             = "oracle-nba-sunday-update"
+  description      = "Recalcula el Top 20 semanalmente"
+  schedule         = "59 23 * * 0"
+  time_zone        = "America/Chicago"
   attempt_deadline = "320s"
   project          = var.project_id
   region           = var.region
 
   http_target {
     http_method = "POST"
-    uri         = google_cloud_run_v2_service.default.uri
+    uri         = "${google_cloud_run_v2_service.default.uri}/update_portfolio"
     oidc_token {
       service_account_email = google_service_account.cloud_run_sa.email
     }
