@@ -35,7 +35,8 @@ def make_predictions_df():
 def test_run_oracle_success(client):
     """Endpoint / debe retornar 200 con predicciones."""
     mock_oracle = MagicMock()
-    mock_oracle.predict_today.return_value = make_predictions_df()
+    # predict_today ahora retorna TUPLA (ml_df, props_df)
+    mock_oracle.predict_today.return_value = (make_predictions_df(), pd.DataFrame())
 
     with patch('main.NBAOracleInference', return_value=mock_oracle), \
          patch('main.NBABigQueryClient') as mock_bq_cls, \
@@ -57,35 +58,44 @@ def test_run_oracle_success(client):
 
 
 def test_run_oracle_no_predictions(client):
-    """Cuando no hay predicciones debe retornar 200 con status warning."""
+    """Cuando no hay partidos debe retornar 200 con status warning y enviar email."""
     mock_oracle = MagicMock()
-    mock_oracle.predict_today.return_value = None
+    # Sin partidos: predict_today retorna (None, None)
+    mock_oracle.predict_today.return_value = (None, None)
 
     with patch('main.NBAOracleInference', return_value=mock_oracle), \
          patch('main.NBABigQueryClient'), \
-         patch('main.NBAEmailService'):
+         patch('main.NBAEmailService') as mock_email_cls:
+
+        mock_email = MagicMock()
+        mock_email_cls.return_value = mock_email
 
         response = client.get('/')
 
     assert response.status_code == 200
     data = response.get_json()
     assert data['status'] == 'warning'
+    mock_email.send_email.assert_called_once()
 
 
 def test_run_oracle_empty_predictions(client):
-    """Con DataFrame vacío debe retornar status warning."""
+    """Con DataFrame vacío debe retornar status warning y enviar email."""
     mock_oracle = MagicMock()
-    mock_oracle.predict_today.return_value = pd.DataFrame()
+    mock_oracle.predict_today.return_value = (pd.DataFrame(), pd.DataFrame())
 
     with patch('main.NBAOracleInference', return_value=mock_oracle), \
          patch('main.NBABigQueryClient'), \
-         patch('main.NBAEmailService'):
+         patch('main.NBAEmailService') as mock_email_cls:
+
+        mock_email = MagicMock()
+        mock_email_cls.return_value = mock_email
 
         response = client.get('/')
 
     assert response.status_code == 200
     data = response.get_json()
     assert data['status'] == 'warning'
+    mock_email.send_email.assert_called_once()
 
 
 def test_run_oracle_exception(client):
@@ -108,7 +118,7 @@ def test_run_oracle_exception(client):
 def test_run_oracle_post_method(client):
     """El endpoint debe aceptar POST también."""
     mock_oracle = MagicMock()
-    mock_oracle.predict_today.return_value = make_predictions_df()
+    mock_oracle.predict_today.return_value = (make_predictions_df(), pd.DataFrame())
 
     with patch('main.NBAOracleInference', return_value=mock_oracle), \
          patch('main.NBABigQueryClient'), \

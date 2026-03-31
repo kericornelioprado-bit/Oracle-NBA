@@ -1,6 +1,6 @@
 import time
 import pandas as pd
-from nba_api.stats.endpoints import leaguegamefinder
+from src.utils.bdl_client import BallDontLieClient
 from src.utils.logger import logger
 import os
 from google.cloud import storage
@@ -13,6 +13,7 @@ class NBADataIngestor:
         self.raw_data_path = raw_data_path
         os.makedirs(self.raw_data_path, exist_ok=True)
         self.bucket_name = os.getenv("GCS_BUCKET_NAME")
+        self.bdl_client = BallDontLieClient()
 
     def upload_to_gcs(self, local_file_path, destination_blob_name):
         """Sube un archivo a Google Cloud Storage si el bucket está configurado."""
@@ -31,21 +32,24 @@ class NBADataIngestor:
 
     def fetch_season_games(self, season_year):
         """
-        Extrae los juegos de una temporada específica (ej. '2023-24').
+        Extrae los juegos de una temporada específica.
+        BDL usa el año de inicio como entero (ej. 2023 para 2023-24).
         """
         try:
-            logger.info(f"Iniciando extracción para la temporada {season_year}...")
-            # LeagueGameFinder permite buscar juegos de la temporada regular
-            game_finder = leaguegamefinder.LeagueGameFinder(
-                season_nullable=season_year,
-                league_id_nullable='00',  # NBA
-                season_type_nullable='Regular Season'
-            )
-            games = game_finder.get_data_frames()[0]
-            logger.info(f"Extracción completada: {len(games)} juegos encontrados.")
+            # Convertir formato '2023-24' a 2023 si es necesario
+            if isinstance(season_year, str) and "-" in season_year:
+                year_int = int(season_year.split("-")[0])
+            else:
+                year_int = int(season_year)
+
+            logger.info(f"Iniciando extracción BallDontLie para la temporada {year_int}...")
+            games = self.bdl_client.get_games(seasons=[year_int])
+            
+            if not games.empty:
+                logger.info(f"Extracción completada: {len(games)} juegos (filas) encontrados.")
             return games
         except Exception as e:
-            logger.error(f"Error al extraer temporada {season_year}: {str(e)}")
+            logger.error(f"Error al extraer temporada {season_year} de BDL: {str(e)}")
             return None
 
     def save_to_parquet(self, df, filename):

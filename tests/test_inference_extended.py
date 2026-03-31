@@ -58,25 +58,47 @@ def make_processed_features_parquet(tmp_path, team_ids):
     return str(path)
 
 
+# Parche global para evitar conexión real a GCP en todos los tests de este módulo
+BQ_PATCH = 'src.models.inference.NBABigQueryClient'
+PLAYER_INGESTION_PATCH = 'src.models.inference.PlayerStatsIngestion'
+
+
+def make_oracle(tmp_path, mock_model=None):
+    """Helper: crea NBAOracleInference sin GCP ni NBA API real."""
+    if mock_model is None:
+        mock_model = MagicMock()
+    fake_model_path = tmp_path / "fake_model.joblib"
+    fake_model_path.touch()
+
+    mock_bq = MagicMock()
+    mock_bq.get_virtual_bankroll.return_value = 20000.0
+    mock_bq.get_top_20_portfolio.return_value = []
+
+    with patch('joblib.load', return_value=mock_model), \
+         patch(BQ_PATCH, return_value=mock_bq), \
+         patch(PLAYER_INGESTION_PATCH):
+        from src.models.inference import NBAOracleInference
+        oracle = NBAOracleInference(model_path=str(fake_model_path))
+
+    oracle.model = mock_model
+    return oracle
+
+
 # --------------------------------------------------------------------------- #
 # Tests                                                                        #
 # --------------------------------------------------------------------------- #
 def test_oracle_init_file_not_found():
     """Debe lanzar FileNotFoundError si el modelo no existe."""
-    from src.models.inference import NBAOracleInference
-    with pytest.raises(FileNotFoundError):
-        NBAOracleInference(model_path="/tmp/nonexistent_model.joblib")
+    with patch(BQ_PATCH), patch(PLAYER_INGESTION_PATCH):
+        from src.models.inference import NBAOracleInference
+        with pytest.raises(FileNotFoundError):
+            NBAOracleInference(model_path="/tmp/nonexistent_model.joblib")
 
 
 def test_oracle_init_loads_model(tmp_path):
     """Debe cargar el modelo y crear el NBAFeatureEngineer."""
     mock_model = MagicMock()
-    fake_model_path = tmp_path / "fake_model.joblib"
-    fake_model_path.touch()
-
-    with patch('joblib.load', return_value=mock_model):
-        from src.models.inference import NBAOracleInference
-        oracle = NBAOracleInference(model_path=str(fake_model_path))
+    oracle = make_oracle(tmp_path, mock_model)
 
     assert oracle.model is mock_model
     assert oracle.engineer is not None
@@ -84,15 +106,8 @@ def test_oracle_init_loads_model(tmp_path):
 
 def test_get_today_games_returns_dataframe(tmp_path):
     """get_today_games debe retornar DataFrame con columnas correctas."""
-    mock_model = MagicMock()
-    fake_model_path = tmp_path / "fake_model.joblib"
-    fake_model_path.touch()
-
+    oracle = make_oracle(tmp_path)
     mock_games = make_today_games()
-
-    with patch('joblib.load', return_value=mock_model):
-        from src.models.inference import NBAOracleInference
-        oracle = NBAOracleInference(model_path=str(fake_model_path))
 
     with patch('nba_api.stats.endpoints.scoreboardv2.ScoreboardV2') as mock_sb:
         mock_sb.return_value.get_data_frames.return_value = [mock_games]
@@ -105,13 +120,7 @@ def test_get_today_games_returns_dataframe(tmp_path):
 
 def test_get_today_games_no_games(tmp_path):
     """Cuando no hay partidos debe retornar None."""
-    mock_model = MagicMock()
-    fake_model_path = tmp_path / "fake_model.joblib"
-    fake_model_path.touch()
-
-    with patch('joblib.load', return_value=mock_model):
-        from src.models.inference import NBAOracleInference
-        oracle = NBAOracleInference(model_path=str(fake_model_path))
+    oracle = make_oracle(tmp_path)
 
     with patch('nba_api.stats.endpoints.scoreboardv2.ScoreboardV2') as mock_sb:
         mock_sb.return_value.get_data_frames.return_value = [pd.DataFrame()]
@@ -122,19 +131,12 @@ def test_get_today_games_no_games(tmp_path):
 
 def test_fetch_recent_history(tmp_path):
     """fetch_recent_history debe concatenar y deduplicar por GAME_ID."""
-    mock_model = MagicMock()
-    fake_model_path = tmp_path / "fake_model.joblib"
-    fake_model_path.touch()
-
+    oracle = make_oracle(tmp_path)
     team_ids = [1610612738, 1610612743]
     history = make_history_df(team_ids)
 
-    with patch('joblib.load', return_value=mock_model):
-        from src.models.inference import NBAOracleInference
-        oracle = NBAOracleInference(model_path=str(fake_model_path))
-
-    # Separar el history por team y mock LeagueGameFinder
-    with patch('nba_api.stats.endpoints.leaguegamefinder.LeagueGameFinder') as mock_lgf:
+    with patch('nba_api.stats.endpoints.leaguegamefinder.LeagueGameFinder') as mock_lgf, \
+         patch('time.sleep'):
         def side_effect(**kwargs):
             team_id = kwargs.get('team_id_nullable')
             team_df = history[history['TEAM_ID'] == team_id]
@@ -150,108 +152,82 @@ def test_fetch_recent_history(tmp_path):
 
 
 def test_predict_today_no_games(tmp_path):
-    """predict_today debe retornar None cuando no hay partidos hoy."""
-    mock_model = MagicMock()
-    fake_model_path = tmp_path / "fake_model.joblib"
-    fake_model_path.touch()
-
-    with patch('joblib.load', return_value=mock_model):
-        from src.models.inference import NBAOracleInference
-        oracle = NBAOracleInference(model_path=str(fake_model_path))
+    """predict_today debe retornar (None, None) cuando no hay partidos hoy."""
+    oracle = make_oracle(tmp_path)
 
     with patch.object(oracle, 'get_today_games', return_value=None):
-        result = oracle.predict_today()
+        ml_df, props_df = oracle.predict_today()
 
-    assert result is None
+    assert ml_df is None
+    assert props_df is None
 
 
 def test_predict_today_with_games(tmp_path):
-    """predict_today debe retornar DataFrame con predicciones para los partidos."""
+    """predict_today debe retornar DataFrames con predicciones para los partidos."""
     mock_model = MagicMock()
-    fake_model_path = tmp_path / "fake_model.joblib"
-    fake_model_path.touch()
+    mock_model.predict_proba.return_value = np.array([[0.35, 0.65]])
+
+    oracle = make_oracle(tmp_path, mock_model)
 
     team_ids = [1610612738, 1610612743, 1610612745, 1610612747]
     today_games = make_today_games()
     history = make_history_df(team_ids)
-    features_parquet = make_processed_features_parquet(tmp_path, team_ids)
-
-    # El modelo siempre retorna probabilidad 0.65
-    mock_model.predict_proba.return_value = np.array([[0.35, 0.65]])
-
-    with patch('joblib.load', return_value=mock_model):
-        from src.models.inference import NBAOracleInference
-        oracle = NBAOracleInference(model_path=str(fake_model_path))
 
     with patch.object(oracle, 'get_today_games', return_value=today_games), \
          patch.object(oracle, 'fetch_recent_history', return_value=history), \
-         patch('pandas.read_parquet', return_value=pd.read_parquet(features_parquet)):
-        result = oracle.predict_today()
+         patch.object(oracle.player_ingestion, 'get_player_logs', return_value=pd.DataFrame()), \
+         patch.object(oracle.player_ingestion, 'calculate_rolling_features', return_value=pd.DataFrame()):
+        ml_df, props_df = oracle.predict_today()
 
-    assert result is not None
-    assert isinstance(result, pd.DataFrame)
-    assert 'RECOMMENDATION' in result.columns
-    assert 'PROB_HOME_WIN' in result.columns
+    assert ml_df is not None
+    assert isinstance(ml_df, pd.DataFrame)
+    assert 'RECOMMENDATION' in ml_df.columns
+    assert 'PROB_HOME_WIN' in ml_df.columns
 
 
 def test_predict_today_recommendation_home(tmp_path):
     """Probabilidad > 0.524 debe generar recomendación HOME."""
     mock_model = MagicMock()
-    fake_model_path = tmp_path / "fake_model.joblib"
-    fake_model_path.touch()
+    mock_model.predict_proba.return_value = np.array([[0.35, 0.65]])
 
-    team_ids = [1610612738, 1610612743]
+    oracle = make_oracle(tmp_path, mock_model)
+
     today_games = pd.DataFrame({
         'GAME_ID': ['0022300001'],
         'HOME_TEAM_ID': [1610612738],
         'VISITOR_TEAM_ID': [1610612743],
     })
-    history = make_history_df(team_ids)
-    features_parquet = make_processed_features_parquet(tmp_path, team_ids)
-
-    mock_model.predict_proba.return_value = np.array([[0.35, 0.65]])
-
-    with patch('joblib.load', return_value=mock_model):
-        from src.models.inference import NBAOracleInference
-        oracle = NBAOracleInference(model_path=str(fake_model_path))
+    history = make_history_df([1610612738, 1610612743])
 
     with patch.object(oracle, 'get_today_games', return_value=today_games), \
          patch.object(oracle, 'fetch_recent_history', return_value=history), \
-         patch('pandas.read_parquet', return_value=pd.read_parquet(features_parquet)):
-        result = oracle.predict_today()
+         patch.object(oracle.player_ingestion, 'get_player_logs', return_value=pd.DataFrame()), \
+         patch.object(oracle.player_ingestion, 'calculate_rolling_features', return_value=pd.DataFrame()):
+        ml_df, _ = oracle.predict_today()
 
-    if result is not None and len(result) > 0:
-        # En v2, sin cuotas (EV=0), la recomendación es NO BET
-        assert result.iloc[0]['RECOMMENDATION'] == 'NO BET'
+    if ml_df is not None and len(ml_df) > 0:
+        assert ml_df.iloc[0]['RECOMMENDATION'] == 'HOME'
 
 
 def test_predict_today_recommendation_away(tmp_path):
-    """Sin cuotas reales, incluso con probabilidad baja para el local, debe ser NO BET."""
+    """Probabilidad < 0.476 debe generar recomendación AWAY."""
     mock_model = MagicMock()
-    fake_model_path = tmp_path / "fake_model.joblib"
-    fake_model_path.touch()
+    mock_model.predict_proba.return_value = np.array([[0.65, 0.35]])
 
-    team_ids = [1610612738, 1610612743]
+    oracle = make_oracle(tmp_path, mock_model)
+
     today_games = pd.DataFrame({
         'GAME_ID': ['0022300001'],
         'HOME_TEAM_ID': [1610612738],
         'VISITOR_TEAM_ID': [1610612743],
     })
-    history = make_history_df(team_ids)
-    features_parquet = make_processed_features_parquet(tmp_path, team_ids)
-
-    # Probabilidad de victoria local baja (0.35) -> Prob visitante alta (0.65)
-    mock_model.predict_proba.return_value = np.array([[0.65, 0.35]])
-
-    with patch('joblib.load', return_value=mock_model):
-        from src.models.inference import NBAOracleInference
-        oracle = NBAOracleInference(model_path=str(fake_model_path))
+    history = make_history_df([1610612738, 1610612743])
 
     with patch.object(oracle, 'get_today_games', return_value=today_games), \
          patch.object(oracle, 'fetch_recent_history', return_value=history), \
-         patch('pandas.read_parquet', return_value=pd.read_parquet(features_parquet)):
-        result = oracle.predict_today()
+         patch.object(oracle.player_ingestion, 'get_player_logs', return_value=pd.DataFrame()), \
+         patch.object(oracle.player_ingestion, 'calculate_rolling_features', return_value=pd.DataFrame()):
+        ml_df, _ = oracle.predict_today()
 
-    if result is not None and len(result) > 0:
-        # Sin cuotas (EV=0), la recomendación es NO BET
-        assert result.iloc[0]['RECOMMENDATION'] == 'NO BET'
+    if ml_df is not None and len(ml_df) > 0:
+        assert ml_df.iloc[0]['RECOMMENDATION'] == 'AWAY'

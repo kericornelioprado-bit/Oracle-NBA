@@ -36,20 +36,28 @@ class PlayerPropsModel:
         logger.debug(f"Predicción {stat_type}: Ritmo {per_minute_rate:.3f}/min * {projected_minutes:.1f} min = {expected_stat:.2f}")
         return expected_stat
 
-    def calculate_prob_over(self, expected_stat, line, stat_type):
+    def calculate_prob_over(self, expected_stat, line, stat_type, player_std=None):
         """
-        Calcula la probabilidad P(Over) asumiendo una distribución normal alrededor de la expectativa.
-        En el futuro, esto puede usar la distribución de Poisson para stats pequeñas.
+        Calcula la probabilidad P(Over) asumiendo distribución normal.
+
+        Args:
+            expected_stat (float): Estadística esperada predicha.
+            line (float): Línea de la casa.
+            stat_type (str): 'REB', 'AST' o 'PTS'.
+            player_std (float | None): Desviación estándar histórica del jugador (L10_STD_*).
+                Si se proporciona y es > 0, reemplaza el DEFAULT_STD_DEV genérico,
+                calibrando la distribución a la variabilidad real del jugador.
         """
         from scipy.stats import norm
-        
+
         if expected_stat <= 0:
             return 0.0
-            
-        std_dev = self.DEFAULT_STD_DEV.get(stat_type, 2.0)
-        
-        # P(X > line) = 1 - CDF(line)
-        # Usamos line + 0.5 por corrección de continuidad en apuestas (ej. Over 6.5)
+
+        if player_std is not None and player_std > 0:
+            std_dev = player_std
+        else:
+            std_dev = self.DEFAULT_STD_DEV.get(stat_type, 2.0)
+
         prob_over = 1.0 - norm.cdf(line, loc=expected_stat, scale=std_dev)
         return prob_over
 

@@ -5,8 +5,7 @@ import os
 import time
 import json
 from datetime import datetime
-from urllib3.util.retry import Retry
-from nba_api.stats.endpoints import scoreboardv2, leaguegamefinder
+from src.utils.bdl_client import BallDontLieClient
 
 from src.data.feature_engineering import NBAFeatureEngineer
 from src.utils.logger import logger
@@ -27,6 +26,7 @@ class NBAOracleInference:
         self.engineer = NBAFeatureEngineer()
         self.odds_client = OddsAPIClient()
         self.bq_client = NBABigQueryClient()
+        self.bdl_client = BallDontLieClient()
         
         # Módulos V2
         self.player_ingestion = PlayerStatsIngestion()
@@ -50,45 +50,53 @@ class NBAOracleInference:
         return max(0, kelly_full * self.kelly_fraction)
 
     def get_today_games(self):
-        """Obtiene los partidos programados para hoy con deduplicación por GAME_ID."""
-        logger.info("Obteniendo partidos programados para hoy...")
+        """Obtiene los partidos programados para hoy vía BallDontLie."""
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        logger.info(f"Obteniendo partidos programados para hoy ({today_str}) vía BallDontLie...")
         try:
-            sb = scoreboardv2.ScoreboardV2(timeout=60)
-            games = sb.get_data_frames()[0]
+            games = self.bdl_client.get_games(start_date=today_str)
             
             if games.empty:
-                logger.warning("No hay partidos programados para hoy.")
+                logger.warning("No hay partidos programados para hoy en BDL.")
                 return None
             
-            games = games[['GAME_ID', 'HOME_TEAM_ID', 'VISITOR_TEAM_ID']]
-            original_count = len(games)
-            games = games.drop_duplicates(subset='GAME_ID')
+            # Formatear para que coincida con lo que espera el resto del código
+            # Necesitamos GAME_ID, HOME_TEAM_ID, VISITOR_TEAM_ID
+            # BDL entrega una fila por equipo, necesitamos pivotar o agrupar
             
-            if len(games) < original_count:
-                logger.info(f"Se eliminaron {original_count - len(games)} partidos duplicados del scoreboard.")
-            return games
+            formatted_games = []
+            game_ids = games['GAME_ID'].unique()
+            
+            for g_id in game_ids:
+                g_df = games[games['GAME_ID'] == g_id]
+                home = g_df[g_df['MATCHUP'].str.contains('vs.')]
+                visitor = g_df[g_df['MATCHUP'].str.contains('@')]
+                
+                if not home.empty and not visitor.empty:
+                    formatted_games.append({
+                        'GAME_ID': g_id,
+                        'HOME_TEAM_ID': home.iloc[0]['TEAM_ID'],
+                        'VISITOR_TEAM_ID': visitor.iloc[0]['TEAM_ID']
+                    })
+            
+            return pd.DataFrame(formatted_games)
         except Exception as e:
-            logger.error(f"Error al obtener scoreboard: {e}")
+            logger.error(f"Error al obtener juegos de BDL: {e}")
             raise
 
     def fetch_recent_history(self, team_ids):
-        """Obtiene el historial reciente de los equipos."""
-        logger.info(f"Extrayendo historial reciente para equipos...")
-        all_history = []
-        for team_id in team_ids:
-            time.sleep(1.5)
-            try:
-                game_finder = leaguegamefinder.LeagueGameFinder(
-                    team_id_nullable=team_id,
-                    season_type_nullable='Regular Season',
-                    timeout=60
-                )
-                df = game_finder.get_data_frames()[0]
-                all_history.append(df)
-            except Exception as e:
-                logger.warning(f"Fallo al obtener historial equipo {team_id}: {e}")
-            
-        return pd.concat(all_history).drop_duplicates(subset='GAME_ID')
+        """Obtiene el historial reciente de los equipos vía BallDontLie."""
+        logger.info(f"Extrayendo historial reciente vía BallDontLie...")
+        # Obtenemos juegos de la temporada actual (2023 para 2023-24)
+        current_season = 2023 
+        try:
+            df = self.bdl_client.get_games(seasons=[current_season])
+            # Filtrar solo juegos que ya ocurrieron (tienen puntuación)
+            df = df[df['WL'].notnull()]
+            return df
+        except Exception as e:
+            logger.warning(f"Fallo al obtener historial de BDL: {e}")
+            return pd.DataFrame()
 
     def predict_today(self):
         today_games = self.get_today_games()
