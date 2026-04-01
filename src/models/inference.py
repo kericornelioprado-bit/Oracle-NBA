@@ -155,46 +155,93 @@ class NBAOracleInference:
         logger.info(f"Iniciando evaluación de Props para {len(self.top_20_ids)} jugadores del portafolio...")
         player_logs = self.player_ingestion.get_player_logs(self.top_20_ids)
         player_features = self.player_ingestion.calculate_rolling_features(player_logs)
-        
+
         props_picks = []
-        
+
         if not player_features.empty:
             latest_player_stats = player_features.groupby('PLAYER_ID').tail(1).set_index('PLAYER_ID').to_dict('index')
-            
-            # Simularemos una iteración sobre los jugadores. En MVP completo consultaríamos Odds API
+
+            # Construir mapa de cuotas reales desde The Odds API
+            # {player_name_lower: {stat: {line, odds, bookmaker}}}
+            real_odds_map = {}
+            market_to_stat = {
+                'player_rebounds': 'REB',
+                'player_points':   'PTS',
+                'player_assists':  'AST',
+            }
+
+            today_events = self.odds_client.get_latest_odds() or []
+            for event in today_events:
+                event_id = event.get('id')
+                props_data = self.odds_client.get_player_props(
+                    event_id,
+                    markets="player_rebounds,player_points,player_assists"
+                )
+                if not props_data:
+                    continue
+                for bookmaker in props_data.get('bookmakers', []):
+                    bookie_title = bookmaker.get('title', '')
+                    for market in bookmaker.get('markets', []):
+                        stat = market_to_stat.get(market.get('key', ''))
+                        if not stat:
+                            continue
+                        for outcome in market.get('outcomes', []):
+                            if outcome.get('description', '').lower() != 'over':
+                                continue
+                            player_key = outcome.get('name', '').lower()
+                            price = outcome.get('price', 0.0)
+                            point = outcome.get('point', 0.0)
+                            if player_key not in real_odds_map:
+                                real_odds_map[player_key] = {}
+                            existing = real_odds_map[player_key].get(stat)
+                            if not existing or price > existing['odds']:
+                                real_odds_map[player_key][stat] = {
+                                    'line': point, 'odds': price, 'bookmaker': bookie_title
+                                }
+
+            logger.info(f"Cuotas reales obtenidas para {len(real_odds_map)} jugadores.")
+
+            # Margen promedio de los partidos de hoy como proxy de game script
+            avg_margin = sum(game_scripts.values()) / len(game_scripts) if game_scripts else 0.0
+
             for player_id, stats in latest_player_stats.items():
                 player_name = stats.get('PLAYER_NAME', f'Unknown_{player_id}')
-                
-                # Asumimos que juega hoy y usamos un margen promedio de ejemplo
-                margin = 5.0
-                
-                # Proyección de minutos
-                proj_min = self.minutes_projector.project_minutes(stats, margin)
-                
-                # Proyección de stats (REB)
-                expected_reb = self.props_model.predict_stat('REB', proj_min, stats)
-                
-                # Simulación de cuota de la casa (Línea en 5.5, Cuota 1.90)
-                line = 5.5
-                odds_open = 1.90
-                
-                prob_over = self.props_model.calculate_prob_over(expected_reb, line, 'REB')
-                ev = self.props_model.calculate_ev(prob_over, odds_open)
-                
-                if ev > self.min_ev:
-                    kelly = self.calculate_kelly(prob_over, odds_open)
-                    stake = kelly * self.bankroll
-                    
-                    if stake > 0:
-                        pick = {
-                            "player_name": player_name,
-                            "market": "REB_OVER",
-                            "line": line,
-                            "odds_open": odds_open,
-                            "stake_usd": round(stake, 2)
-                        }
-                        props_picks.append(pick)
-                        logger.info(f"PICK FOUND: {player_name} Over {line} REB | EV: {ev:.2%} | Stake: ${stake:.2f}")
+                player_odds = real_odds_map.get(player_name.lower(), {})
+
+                if not player_odds:
+                    continue  # sin cuotas reales, no hay pick
+
+                proj_min = self.minutes_projector.project_minutes(stats, avg_margin)
+
+                for stat, odds_info in player_odds.items():
+                    expected_stat = self.props_model.predict_stat(stat, proj_min, stats)
+                    player_std = stats.get(f'L10_STD_{stat}')
+
+                    line      = odds_info['line']
+                    odds_open = odds_info['odds']
+                    bookmaker = odds_info['bookmaker']
+
+                    prob_over = self.props_model.calculate_prob_over(expected_stat, line, stat, player_std)
+                    ev = self.props_model.calculate_ev(prob_over, odds_open)
+
+                    if ev > self.min_ev:
+                        kelly = self.calculate_kelly(prob_over, odds_open)
+                        stake = kelly * self.bankroll
+
+                        if stake > 0:
+                            pick = {
+                                "player_name": player_name,
+                                "market":      f"{stat}_OVER",
+                                "line":        line,
+                                "odds_open":   odds_open,
+                                "odds_close":  None,
+                                "stake_usd":   round(stake, 2),
+                                "bookmaker":   bookmaker,
+                                "ev":          round(ev, 4),
+                                "kelly_pct":   round(kelly, 4),
+                            }
+                            props_picks.append(pick)
+                            logger.info(f"PICK: {player_name} Over {line} {stat} @ {odds_open} | EV: {ev:.2%} | Stake: ${stake:.2f}")
         
         # Guardar en BigQuery el historial de picks V2
         if props_picks:

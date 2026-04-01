@@ -32,8 +32,11 @@ def run_oracle():
             # 2. Persistencia en BigQuery (Moneyline histórico)
             bq_client.insert_predictions(predictions_df)
 
-            # 3. Generación de Reporte y Envío de Email
-            report_html = NBAReportGenerator.generate_html_report(predictions_df)
+            # 3. Generación de Reporte y Envío de Email (Props si hay, Moneyline como fallback)
+            if props_df is not None and not props_df.empty:
+                report_html = NBAReportGenerator.generate_props_report(props_df, bankroll=int(oracle.bankroll))
+            else:
+                report_html = NBAReportGenerator.generate_html_report(predictions_df)
             email_service.send_prediction_report(report_html)
 
             logger.info("✅ EJECUCIÓN COMPLETADA EXITOSAMENTE.")

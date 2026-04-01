@@ -107,48 +107,48 @@ def test_oracle_init_loads_model(tmp_path):
 def test_get_today_games_returns_dataframe(tmp_path):
     """get_today_games debe retornar DataFrame con columnas correctas."""
     oracle = make_oracle(tmp_path)
-    mock_games = make_today_games()
+    
+    # BDL entrega una fila por equipo, necesitamos GAME_ID, TEAM_ID y MATCHUP
+    mock_df = pd.DataFrame([
+        {'GAME_ID': '001', 'TEAM_ID': 10, 'MATCHUP': 'A vs. B'},
+        {'GAME_ID': '001', 'TEAM_ID': 20, 'MATCHUP': 'B @ A'}
+    ])
 
-    with patch('nba_api.stats.endpoints.scoreboardv2.ScoreboardV2') as mock_sb:
-        mock_sb.return_value.get_data_frames.return_value = [mock_games]
+    with patch.object(oracle.bdl_client, 'get_games', return_value=mock_df):
         result = oracle.get_today_games()
 
     assert result is not None
     assert 'GAME_ID' in result.columns
     assert 'HOME_TEAM_ID' in result.columns
+    assert result.iloc[0]['HOME_TEAM_ID'] == 10
 
 
 def test_get_today_games_no_games(tmp_path):
     """Cuando no hay partidos debe retornar None."""
     oracle = make_oracle(tmp_path)
 
-    with patch('nba_api.stats.endpoints.scoreboardv2.ScoreboardV2') as mock_sb:
-        mock_sb.return_value.get_data_frames.return_value = [pd.DataFrame()]
+    with patch.object(oracle.bdl_client, 'get_games', return_value=pd.DataFrame()):
         result = oracle.get_today_games()
 
     assert result is None
 
 
 def test_fetch_recent_history(tmp_path):
-    """fetch_recent_history debe concatenar y deduplicar por GAME_ID."""
+    """fetch_recent_history debe obtener historial vía BDL."""
     oracle = make_oracle(tmp_path)
-    team_ids = [1610612738, 1610612743]
-    history = make_history_df(team_ids)
+    team_ids = [10, 20]
+    
+    # Mock de BDL con columna WL poblada para que no se filtre a vacío
+    mock_df = pd.DataFrame([
+        {'GAME_ID': '001', 'TEAM_ID': 10, 'WL': 'W', 'PTS': 110},
+        {'GAME_ID': '001', 'TEAM_ID': 20, 'WL': 'L', 'PTS': 100}
+    ])
 
-    with patch('nba_api.stats.endpoints.leaguegamefinder.LeagueGameFinder') as mock_lgf, \
-         patch('time.sleep'):
-        def side_effect(**kwargs):
-            team_id = kwargs.get('team_id_nullable')
-            team_df = history[history['TEAM_ID'] == team_id]
-            mock_inst = MagicMock()
-            mock_inst.get_data_frames.return_value = [team_df]
-            return mock_inst
-
-        mock_lgf.side_effect = side_effect
+    with patch.object(oracle.bdl_client, 'get_games', return_value=mock_df):
         result = oracle.fetch_recent_history(team_ids)
 
     assert isinstance(result, pd.DataFrame)
-    assert len(result) > 0
+    assert not result.empty
 
 
 def test_predict_today_no_games(tmp_path):

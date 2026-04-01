@@ -1,74 +1,59 @@
 import pytest
 import pandas as pd
-import numpy as np
+from unittest.mock import MagicMock, patch
 from src.data.ingestion import NBADataIngestor
-from src.models.evaluator import NBAProfitSim
-from unittest.mock import patch, MagicMock
+import os
 
 @pytest.fixture
-def mock_games_df():
-    """Genera datos de juegos simulados."""
-    return pd.DataFrame({
-        'GAME_ID': ['001', '002'],
-        'TEAM_ID': [1610612738, 1610612743],
-        'WL': ['W', 'L'],
-        'PTS': [110, 105],
-        'GAME_DATE': ['2023-01-01', '2023-01-02']
-    })
+def mock_ingestor(tmp_path):
+    """Fixture para crear un ingestor con un path temporal y cliente mockeado."""
+    with patch('src.data.ingestion.BallDontLieClient') as mock_bdl_cls:
+        mock_bdl = MagicMock()
+        mock_bdl_cls.return_value = mock_bdl
+        ingestor = NBADataIngestor(raw_data_path=str(tmp_path))
+        # Guardamos el mock en el objeto para poder configurar side_effects/returns en cada test
+        ingestor.mock_bdl = mock_bdl
+        return ingestor
 
-def test_ingestor_save_parquet(tmp_path, mock_games_df):
-    """Prueba que el ingestor guarde correctamente en Parquet."""
-    raw_path = tmp_path / "raw"
-    raw_path.mkdir()
-    ingestor = NBADataIngestor(raw_data_path=str(raw_path))
-    
-    filename = "test_games.parquet"
-    ingestor.save_to_parquet(mock_games_df, filename)
-    
-    saved_file = raw_path / filename
-    assert saved_file.exists()
-    df_loaded = pd.read_parquet(saved_file)
-    assert len(df_loaded) == 2
-    assert 'WL' in df_loaded.columns
+def test_fetch_season_games_success(mock_ingestor):
+    """Prueba que el ingestor extraiga juegos de la temporada correctamente."""
+    mock_df = pd.DataFrame([
+        {'GAME_ID': 1, 'GAME_DATE': '2023-10-24', 'SEASON_ID': 2023, 'TEAM_ID': 1610612743, 'WL': 'W'},
+        {'GAME_ID': 1, 'GAME_DATE': '2023-10-24', 'SEASON_ID': 2023, 'TEAM_ID': 1610612747, 'WL': 'L'}
+    ])
+    mock_ingestor.mock_bdl.get_games.return_value = mock_df
 
-def test_profit_calculator_math():
-    """Valida matemáticamente la lógica de cálculo de beneficios del simulador."""
-    # Simulamos una fila de apuesta ganadora
-    row_win = pd.Series({
-        'BET_PLACED': 1,
-        'PRED_PROBA': 0.8,
-        'TARGET': 1, # Ganó el local
-        'PREDICTION': 1
-    })
-    
-    # Simulamos una fila de apuesta perdedora
-    row_loss = pd.Series({
-        'BET_PLACED': 1,
-        'PRED_PROBA': 0.8,
-        'TARGET': 0, # Perdió el local
-        'PREDICTION': 1
-    })
+    # Caso 1: String '2023-24'
+    result = mock_ingestor.fetch_season_games("2023-24")
+    assert len(result) == 2
+    mock_ingestor.mock_bdl.get_games.assert_called_with(seasons=[2023])
 
-    # Usamos cuota 2.0 para simplificar: gana 100 o pierde 100
-    unit_size = 100
-    odds = 2.0
-    
-    # Lógica de beneficio (extrayendo de evaluator.py)
-    def calc(row):
-        if row['PRED_PROBA'] > 0.5 and row['TARGET'] == 1:
-            return unit_size * (odds - 1)
-        else:
-            return -unit_size
-
-    assert calc(row_win) == 100.0
-    assert calc(row_loss) == -100.0
-
-@patch('nba_api.stats.endpoints.leaguegamefinder.LeagueGameFinder')
-def test_ingestor_api_error_handling(mock_finder):
+def test_ingestor_api_error_handling(mock_ingestor):
     """Prueba que el ingestor maneje errores de la API sin romperse."""
-    mock_finder.side_effect = Exception("API Timeout")
-    ingestor = NBADataIngestor()
-    
+    mock_ingestor.mock_bdl.get_games.side_effect = Exception("API Timeout")
+
     # El método debe devolver None en caso de error y no lanzar la excepción
-    result = ingestor.fetch_season_games("2023-24")
+    result = mock_ingestor.fetch_season_games(2023)
     assert result is None
+
+def test_save_to_parquet(mock_ingestor, tmp_path):
+    """Prueba el guardado de datos en formato Parquet."""
+    df = pd.DataFrame({'test': [1, 2, 3]})
+    filename = "test_data.parquet"
+    
+    with patch.object(mock_ingestor, 'upload_to_gcs') as mock_upload:
+        mock_ingestor.save_to_parquet(df, filename)
+        
+        expected_path = os.path.join(str(tmp_path), filename)
+        assert os.path.exists(expected_path)
+        mock_upload.assert_called_once()
+
+@patch('google.cloud.storage.Client')
+def test_upload_to_gcs(mock_storage_cls, mock_ingestor):
+    """Prueba la subida a GCS."""
+    mock_ingestor.bucket_name = "test-bucket"
+    mock_client = MagicMock()
+    mock_storage_cls.return_value = mock_client
+    
+    mock_ingestor.upload_to_gcs("local.path", "dest.blob")
+    mock_client.bucket.assert_called_with("test-bucket")

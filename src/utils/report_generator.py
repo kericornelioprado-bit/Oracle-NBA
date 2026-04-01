@@ -119,3 +119,75 @@ class NBAReportGenerator:
         """
         return html
 
+    @staticmethod
+    def generate_props_report(props_df, bankroll=20000):
+        """Genera un reporte HTML de picks de Player Props."""
+        if props_df is None or props_df.empty:
+            return "<p>No hay picks de Player Props disponibles para hoy.</p>"
+
+        html = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; }}
+                table {{ border-collapse: collapse; width: 100%; font-size: 14px; }}
+                th, td {{ border: 1px solid #dddddd; text-align: center; padding: 10px; }}
+                th {{ background-color: #0d1b2a; color: white; }}
+                tr:nth-child(even) {{ background-color: #f8f9fa; }}
+                .value-high {{ color: #28a745; font-weight: bold; }}
+                .header-container {{ background: #1d3557; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }}
+            </style>
+        </head>
+        <body>
+            <div class="header-container">
+                <h1 style="margin:0;">🏀 Oráculo NBA v2: Player Props Report</h1>
+                <p style="margin:5px 0 0 0;">Fecha: {datetime.now().strftime('%d/%m/%Y')} | Banca Virtual: ${bankroll:,.0f} USD</p>
+            </div>
+            <table>
+                <tr>
+                    <th>Jugador</th>
+                    <th>Mercado</th>
+                    <th>Línea</th>
+                    <th>Cuota</th>
+                    <th>Casa</th>
+                    <th>EV</th>
+                    <th>Kelly %</th>
+                    <th>Inversión</th>
+                </tr>
+        """
+
+        for _, row in props_df.iterrows():
+            ev_pct    = f"{row.get('ev', 0):.2%}"
+            kelly_pct = f"{row.get('kelly_pct', 0):.2%}"
+            bookmaker = row.get('bookmaker', 'N/A')
+            odds      = row.get('odds_open', 'N/A')
+            odds_str  = f"{odds:.2f}" if isinstance(odds, float) else str(odds)
+
+            html += f"""
+                <tr>
+                    <td><b>{row['player_name']}</b></td>
+                    <td>{row['market']}</td>
+                    <td>{row['line']}</td>
+                    <td>{odds_str}</td>
+                    <td>{bookmaker}</td>
+                    <td class="value-high">{ev_pct}</td>
+                    <td>{kelly_pct}</td>
+                    <td><mark>${row['stake_usd']:.2f}</mark></td>
+                </tr>
+            """
+
+        html += """
+            </table>
+            <br>
+            <div style="font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
+                <p><b>Glosario:</b><br>
+                - <b>EV:</b> Ventaja matemática sobre la casa de apuestas.<br>
+                - <b>Kelly:</b> Gestión de banca fraccional (0.25) para maximizar crecimiento logarítmico.<br>
+                - <b>Banca Virtual:</b> Simulación basada en un capital ficticio inicial de $20,000 USD para Paper Trading.</p>
+                <p><i>Disclaimer: Este reporte es informativo. Las apuestas deportivas conllevan riesgo.</i></p>
+            </div>
+        </body>
+        </html>
+        """
+        return html
+

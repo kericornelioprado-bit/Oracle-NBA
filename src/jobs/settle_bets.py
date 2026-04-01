@@ -40,9 +40,12 @@ def _match_player(stats_df, player_name: str):
 
     parts = name_lower.split()
     if len(parts) >= 2:
+        # Intenta que el primer nombre Y el último nombre estén presentes (orden no estricto)
+        # O que el nombre buscado sea un subconjunto de lo que hay en BDL
         partial = stats_df[
             stats_df['_name_lower'].str.contains(parts[0], na=False) &
-            stats_df['_name_lower'].str.contains(parts[-1], na=False)
+            (stats_df['_name_lower'].str.contains(parts[-1], na=False) | 
+             stats_df['_name_lower'].str.contains(parts[1], na=False))
         ]
         if not partial.empty:
             return partial.iloc[0]

@@ -1,5 +1,6 @@
 import pandas as pd
 from src.utils.bdl_client import BallDontLieClient
+from src.utils.bigquery_client import NBABigQueryClient
 from src.utils.logger import logger
 import time
 
