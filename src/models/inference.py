@@ -35,8 +35,8 @@ class NBAOracleInference:
         
         # Obtener banca virtual real desde BQ o default
         self.bankroll = self.bq_client.get_virtual_bankroll()
-        self.min_ev = float(os.getenv("MIN_EV_THRESHOLD", 0.05)) # 5% EV mínimo para Props
-        self.kelly_fraction = float(os.getenv("KELLY_FRACTION", 0.25))
+        self.min_ev = float(os.getenv("MIN_EV_THRESHOLD") or 0.05) # 5% EV mínimo para Props
+        self.kelly_fraction = float(os.getenv("KELLY_FRACTION") or 0.25)
         
         # Obtener portafolio actual
         self.top_20_ids = self.bq_client.get_top_20_portfolio()
