@@ -55,12 +55,13 @@ class BallDontLieClient:
         
         return self._map_games_to_nba_api_format(all_games) if all_games else pd.DataFrame()
 
-    def get_player_stats(self, seasons=None, player_ids=None, start_date=None):
+    def get_player_stats(self, seasons=None, player_ids=None, start_date=None, end_date=None):
         """Obtiene stats de jugadores y las mapea."""
         params = {"per_page": 100}
         if seasons: params["seasons[]"] = seasons if isinstance(seasons, list) else [seasons]
         if player_ids: params["player_ids[]"] = player_ids if isinstance(player_ids, list) else [player_ids]
-        if start_date: params["dates[]"] = [start_date] if isinstance(start_date, str) else start_date
+        if start_date: params["start_date"] = start_date
+        if end_date: params["end_date"] = end_date
 
         all_stats = []
         cursor = None

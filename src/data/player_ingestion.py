@@ -16,15 +16,20 @@ class PlayerStatsIngestion:
         self.season = season
         self.bdl_client = BallDontLieClient()
 
-    def get_player_logs(self, player_ids=None):
+    def get_player_logs(self, player_ids=None, start_date=None):
         """
-        Obtiene los logs de juego de la temporada para todos o una lista de jugadores vía BallDontLie.
+        Obtiene los logs de juego para todos o una lista de jugadores vía BallDontLie.
+        Si se pasa start_date (YYYY-MM-DD), filtra desde esa fecha en adelante (ignora season).
         """
-        logger.info(f"Extrayendo player logs para la temporada {self.season} vía BallDontLie...")
+        if start_date:
+            logger.info(f"Extrayendo player logs desde {start_date} vía BallDontLie...")
+        else:
+            logger.info(f"Extrayendo player logs para la temporada {self.season} vía BallDontLie...")
         try:
-            # En BDL, si player_ids es None, trae todos (sujeto a paginación masiva)
-            # Para el MVP, si player_ids es grande, esto puede tardar
-            df = self.bdl_client.get_player_stats(seasons=[self.season], player_ids=player_ids)
+            if start_date:
+                df = self.bdl_client.get_player_stats(player_ids=player_ids, start_date=start_date)
+            else:
+                df = self.bdl_client.get_player_stats(seasons=[self.season], player_ids=player_ids)
             
             if df.empty:
                 logger.warning("No se encontraron logs de jugadores en BDL.")

@@ -152,65 +152,40 @@ class NBAOracleInference:
             })
 
         # --- 2. MOTOR DE PROPS (V2) ---
-        logger.info(f"Iniciando evaluación de Props para {len(self.top_20_ids)} jugadores del portafolio...")
-        player_logs = self.player_ingestion.get_player_logs(self.top_20_ids)
-        player_features = self.player_ingestion.calculate_rolling_features(player_logs)
+        # Los props de hoy definen el universo de jugadores a evaluar
+        real_odds_map = self.odds_client.get_all_player_props_today()
+        logger.info(f"Evaluando props para {len(real_odds_map)} jugadores con cuotas hoy.")
 
         props_picks = []
 
-        if not player_features.empty:
-            latest_player_stats = player_features.groupby('PLAYER_ID').tail(1).set_index('PLAYER_ID').to_dict('index')
+        if real_odds_map:
+            # Fetch logs de los últimos 30 días (todos los jugadores activos, sin filtro de IDs)
+            cutoff = (datetime.now() - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
+            player_logs = self.player_ingestion.get_player_logs(start_date=cutoff)
+            player_features = self.player_ingestion.calculate_rolling_features(player_logs)
 
-            # Construir mapa de cuotas reales desde The Odds API
-            # {player_name_lower: {stat: {line, odds, bookmaker}}}
-            real_odds_map = {}
-            market_to_stat = {
-                'player_rebounds': 'REB',
-                'player_points':   'PTS',
-                'player_assists':  'AST',
-            }
-
-            today_events = self.odds_client.get_latest_odds() or []
-            for event in today_events:
-                event_id = event.get('id')
-                props_data = self.odds_client.get_player_props(
-                    event_id,
-                    markets="player_rebounds,player_points,player_assists"
+            # Lookup por nombre (minúsculas) → stats más recientes del jugador
+            latest_by_name = {}
+            if not player_features.empty:
+                latest_by_name = (
+                    player_features
+                    .groupby('PLAYER_ID')
+                    .tail(1)
+                    .assign(name_key=lambda df: df['PLAYER_NAME'].str.lower())
+                    .set_index('name_key')
+                    .to_dict('index')
                 )
-                if not props_data:
-                    continue
-                for bookmaker in props_data.get('bookmakers', []):
-                    bookie_title = bookmaker.get('title', '')
-                    for market in bookmaker.get('markets', []):
-                        stat = market_to_stat.get(market.get('key', ''))
-                        if not stat:
-                            continue
-                        for outcome in market.get('outcomes', []):
-                            if outcome.get('description', '').lower() != 'over':
-                                continue
-                            player_key = outcome.get('name', '').lower()
-                            price = outcome.get('price', 0.0)
-                            point = outcome.get('point', 0.0)
-                            if player_key not in real_odds_map:
-                                real_odds_map[player_key] = {}
-                            existing = real_odds_map[player_key].get(stat)
-                            if not existing or price > existing['odds']:
-                                real_odds_map[player_key][stat] = {
-                                    'line': point, 'odds': price, 'bookmaker': bookie_title
-                                }
 
-            logger.info(f"Cuotas reales obtenidas para {len(real_odds_map)} jugadores.")
-
-            # Margen promedio de los partidos de hoy como proxy de game script
             avg_margin = sum(game_scripts.values()) / len(game_scripts) if game_scripts else 0.0
+            matched = 0
 
-            for player_id, stats in latest_player_stats.items():
-                player_name = stats.get('PLAYER_NAME', f'Unknown_{player_id}')
-                player_odds = real_odds_map.get(player_name.lower(), {})
+            for player_name_lower, player_odds in real_odds_map.items():
+                stats = latest_by_name.get(player_name_lower)
+                if not stats:
+                    continue  # sin historial reciente en BDL
 
-                if not player_odds:
-                    continue  # sin cuotas reales, no hay pick
-
+                matched += 1
+                player_name = stats.get('PLAYER_NAME', player_name_lower.title())
                 proj_min = self.minutes_projector.project_minutes(stats, avg_margin)
 
                 for stat, odds_info in player_odds.items():
@@ -242,6 +217,8 @@ class NBAOracleInference:
                             }
                             props_picks.append(pick)
                             logger.info(f"PICK: {player_name} Over {line} {stat} @ {odds_open} | EV: {ev:.2%} | Stake: ${stake:.2f}")
+
+            logger.info(f"Jugadores matcheados con historial BDL: {matched}/{len(real_odds_map)}")
         
         # Guardar en BigQuery el historial de picks V2
         if props_picks:
