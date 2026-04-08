@@ -133,6 +133,38 @@ def test_run_oracle_post_method(client):
     assert response.status_code == 200
 
 
+def test_run_oracle_combined_report_when_props_exist(client):
+    """Cuando props_df no está vacío, el email debe combinar props + moneyline."""
+    mock_oracle = MagicMock()
+    props_df = pd.DataFrame([{
+        'player_name': 'LeBron James', 'market': 'PTS_OVER', 'line': 24.5,
+        'odds_open': 1.90, 'stake_usd': 150.0, 'bookmaker': 'Pinnacle',
+        'ev': 0.12, 'kelly_pct': 0.03, 'odds_close': None,
+    }])
+    mock_oracle.predict_today.return_value = (make_predictions_df(), props_df)
+    mock_oracle.bankroll = 20000.0
+
+    with patch('main.NBAOracleInference', return_value=mock_oracle), \
+         patch('main.NBABigQueryClient') as mock_bq_cls, \
+         patch('main.NBAReportGenerator.generate_props_report', return_value='<props/>') as mock_props, \
+         patch('main.NBAReportGenerator.generate_html_report', return_value='<ml/>') as mock_ml, \
+         patch('main.NBAEmailService') as mock_email_cls:
+
+        mock_bq_cls.return_value = MagicMock()
+        mock_email = MagicMock()
+        mock_email_cls.return_value = mock_email
+
+        response = client.get('/')
+
+    assert response.status_code == 200
+    mock_props.assert_called_once()
+    mock_ml.assert_called_once()
+    # El reporte enviado combina ambas secciones
+    sent_html = mock_email.send_prediction_report.call_args[0][0]
+    assert '<props/>' in sent_html
+    assert '<ml/>' in sent_html
+
+
 def test_email_service_send_prediction_report():
     """send_prediction_report debe usar el subject correcto y is_html=True."""
     with patch.dict('os.environ', {'GMAIL_USER': 'test@gmail.com', 'GMAIL_APP_PASSWORD': 'pwd'}):

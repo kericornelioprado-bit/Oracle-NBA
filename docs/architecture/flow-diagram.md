@@ -11,33 +11,46 @@ flowchart TD
     SCHED["☁️ Cloud Scheduler\n0 14 * * * UTC"]
     CR["☁️ Cloud Run\noracle-nba-service"]
     FLASK["🐍 Flask /\nmain.py"]
-    NBA["🌐 NBA API\nScoreboardV2\nLeagueGameFinder"]
-    FE["⚙️ Feature Engineering\nRolling Windows [3,5,10,20]\nRest Days"]
-    MODEL["🤖 Stacking Model\nLR + XGBoost\nnba_best_model_stacking.joblib"]
-    BQ["☁️ BigQuery\noracle_nba_ds.predictions"]
-    RPT["📄 Report Generator\nHTML Table"]
-    EMAIL["📧 Gmail SMTP\nstmp.gmail.com:587"]
-    GCS["☁️ Cloud Storage\nnba-data-lake"]
 
-    SCHED -->|"POST HTTP + OIDC"| CR
+    subgraph ML["Moneyline (Game Picks)"]
+        BDL_G["BallDontLie API\npartidos de hoy"]
+        FE["NBAFeatureEngineer\nRolling [3,5,10,20] + rest days"]
+        MODEL["Stacking Model\nLR + XGBoost\n63.91% accuracy"]
+    end
+
+    subgraph PROPS["Player Props"]
+        ODDS["The Odds API v4\nget_all_player_props_today()\n~100 jugadores con cuotas"]
+        BDL_P["BallDontLie API\nlogs últimos 30 días"]
+        FEAT_P["PlayerStatsIngestion\nL10 rolling + std (shift-1)"]
+        PROJ["MinutesProjector\ngame script adjustment"]
+        EV["PlayerPropsModel\nP(Over) normal → EV\nKelly fraccional"]
+    end
+
+    BQ_ML["☁️ BigQuery\noracle_nba_ds.predictions"]
+    BQ_PROPS["☁️ BigQuery\noracle_nba_ds.prop_bets"]
+    RPT["NBAReportGenerator\nHTML con picks ML + props"]
+    EMAIL["📧 Gmail SMTP :587"]
+
+    SCHED -->|"POST OIDC"| CR
     CR --> FLASK
-    FLASK -->|"get_today_games()"| NBA
-    NBA -->|"games DataFrame"| FLASK
-    FLASK -->|"fetch_recent_history()"| NBA
-    NBA -->|"60-day history"| FE
-    FE -->|"processed features"| MODEL
-    MODEL -->|"predictions DataFrame\nPROB_HOME_WIN\nRECOMMENDATION"| FLASK
-    FLASK -->|"insert_predictions()"| BQ
-    FLASK -->|"generate_html_report()"| RPT
-    RPT -->|"HTML cartelera"| EMAIL
-    FLASK -.->|"raw data (opcional)"| GCS
+    FLASK --> BDL_G --> FE --> MODEL
+    FLASK --> ODDS
+    ODDS -->|"real_odds_map"| EV
+    BDL_P --> FEAT_P --> PROJ --> EV
+    MODEL -->|"picks ML"| BQ_ML
+    EV -->|"EV > 5% → pick"| BQ_PROPS
+    BQ_ML --> RPT
+    BQ_PROPS --> RPT
+    RPT --> EMAIL
 
     style SCHED fill:#4285F4,color:#fff
     style CR fill:#4285F4,color:#fff
-    style BQ fill:#4285F4,color:#fff
-    style GCS fill:#4285F4,color:#fff
+    style BQ_ML fill:#4285F4,color:#fff
+    style BQ_PROPS fill:#4285F4,color:#fff
     style MODEL fill:#FF6D00,color:#fff
+    style EV fill:#FF6D00,color:#fff
     style EMAIL fill:#34A853,color:#fff
+    style ODDS fill:#7B1FA2,color:#fff
 ```
 
 ---

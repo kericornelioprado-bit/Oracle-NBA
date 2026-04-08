@@ -110,7 +110,17 @@ class NBAOracleInference:
         processed_history = self.engineer.create_rolling_features(history_df)
         processed_history = self.engineer.calculate_rest_days(processed_history)
         latest_stats = processed_history.groupby('TEAM_ID').tail(1).fillna(0)
-        
+
+        # Fetch real moneyline odds once before the game loop
+        ml_odds_raw = self.odds_client.get_latest_odds()
+        ml_odds_data = ml_odds_raw if isinstance(ml_odds_raw, list) else []
+        odds_by_home = {
+            ev['home_team'].lower(): ev
+            for ev in ml_odds_data
+            if isinstance(ev, dict) and ev.get('home_team')
+        }
+        logger.info(f"Cuotas moneyline reales disponibles para {len(odds_by_home)} eventos.")
+
         config_path = "config/model_features.json"
         if os.path.exists(config_path):
             with open(config_path, "r") as f:
@@ -142,13 +152,35 @@ class NBAOracleInference:
             margin = (prob_home - 0.5) * 100 * 0.5
             game_scripts[game['GAME_ID']] = margin
             
+            rec = 'HOME' if prob_home > 0.524 else ('AWAY' if prob_home < 0.476 else 'NO BET')
+
+            # Wire real odds for this game
+            home_name = NBAReportGenerator.TEAM_NAMES.get(home_id, '').lower()
+            event = odds_by_home.get(home_name)
+            rec_odds, bookmaker, ev, kelly_pct, stake = 1.91, 'N/A', 0.0, 0.0, 0.0
+            if event and rec != 'NO BET':
+                best = OddsAPIClient.get_best_odds(event)
+                if rec == 'HOME':
+                    rec_odds = best['best_home_odds'] or 1.91
+                    bookmaker = best['best_home_bookie'] or 'N/A'
+                    bet_prob = prob_home
+                else:
+                    rec_odds = best['best_away_odds'] or 1.91
+                    bookmaker = best['best_away_bookie'] or 'N/A'
+                    bet_prob = 1 - prob_home
+                if rec_odds > 1.0:
+                    ev = round(bet_prob * rec_odds - 1, 4)
+                    kelly_pct = self.calculate_kelly(bet_prob, rec_odds)
+                    stake = round(kelly_pct * self.bankroll, 2)
+
             ml_predictions.append({
                 'GAME_ID': game['GAME_ID'],
                 'HOME_ID': home_id,
                 'AWAY_ID': away_id,
                 'PROB_HOME_WIN': prob_home,
-                'RECOMMENDATION': 'HOME' if prob_home > 0.524 else ('AWAY' if prob_home < 0.476 else 'NO BET'),
-                'ODDS': 1.91, 'EV': 0.0, 'KELLY_PCT': 0.0, 'UNITS_SUGGESTED': 0.0, 'BOOKMAKER': 'N/A'
+                'RECOMMENDATION': rec,
+                'ODDS': rec_odds, 'EV': ev, 'KELLY_PCT': kelly_pct,
+                'UNITS_SUGGESTED': stake, 'BOOKMAKER': bookmaker
             })
 
         # --- 2. MOTOR DE PROPS (V2) ---

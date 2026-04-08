@@ -115,3 +115,56 @@ def test_insert_predictions_custom_version(client_with_creds):
     rows = call_args[0][1]
     assert rows[0]['model_version'] == 'stacking_v2'
     assert rows[0]['experiment_id'] == 'run_42'
+
+# --------------------------------------------------------------------------- #
+# Tests V2                                                                     #
+# --------------------------------------------------------------------------- #
+
+def test_get_virtual_bankroll_success(client_with_creds):
+    mock_job = MagicMock()
+    mock_job.result.return_value = [MagicMock(current_balance=25000.5)]
+    client_with_creds.client.query.return_value = mock_job
+    
+    result = client_with_creds.get_virtual_bankroll()
+    assert result == 25000.5
+
+def test_get_virtual_bankroll_empty(client_with_creds):
+    mock_job = MagicMock()
+    mock_job.result.return_value = []
+    client_with_creds.client.query.return_value = mock_job
+    
+    result = client_with_creds.get_virtual_bankroll()
+    assert result == 20000.0
+
+def test_get_virtual_bankroll_exception(client_with_creds):
+    client_with_creds.client.query.side_effect = Exception("Query error")
+    result = client_with_creds.get_virtual_bankroll()
+    assert result == 20000.0
+
+def test_insert_prop_bets_success(client_with_creds):
+    client_with_creds.client.insert_rows_json.return_value = []
+    bets = [{'player_name': 'Test', 'market': 'PTS_OVER', 'line': 20.5, 'odds_open': 1.90, 'stake_usd': 100}]
+    result = client_with_creds.insert_prop_bets(bets)
+    assert result is True
+
+def test_insert_prop_bets_errors(client_with_creds):
+    client_with_creds.client.insert_rows_json.return_value = [{'error': 'failed'}]
+    bets = [{'player_name': 'Test'}]
+    result = client_with_creds.insert_prop_bets(bets)
+    assert result is False
+
+def test_insert_prop_bets_exception(client_with_creds):
+    client_with_creds.client.insert_rows_json.side_effect = Exception("BQ error")
+    bets = [{'player_name': 'Test'}]
+    result = client_with_creds.insert_prop_bets(bets)
+    assert result is False
+
+def test_get_top_20_portfolio_success(client_with_creds):
+    client_with_creds.client.query.return_value = [MagicMock(player_id=10), MagicMock(player_id=20)]
+    result = client_with_creds.get_top_20_portfolio()
+    assert result == [10, 20]
+
+def test_get_top_20_portfolio_exception(client_with_creds):
+    client_with_creds.client.query.side_effect = Exception("BQ error")
+    result = client_with_creds.get_top_20_portfolio()
+    assert result == []

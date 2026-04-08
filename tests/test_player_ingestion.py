@@ -180,3 +180,18 @@ def test_enrich_with_game_context_success(ingestion):
     assert result.loc[result['GAME_ID'] == 'G_0', 'GAME_MARGIN'].iloc[0] == 10.0
     assert result.loc[result['GAME_ID'] == 'G_1', 'GAME_MARGIN'].iloc[0] == -5.0
     assert result.loc[result['GAME_ID'] == 'G_2', 'GAME_MARGIN'].iloc[0] == 0.0 # No en mock_games
+
+def test_enrich_with_game_context_empty_games_response(ingestion):
+    df = _make_clean_logs_df(n_players=1, n_games=5)
+    ingestion.mock_bdl.get_games.return_value = pd.DataFrame() # Vacío
+    
+    result = ingestion.enrich_with_game_context(df)
+    assert 'GAME_MARGIN' in result.columns
+    assert 'TEAM_L10_MARGIN' in result.columns
+    assert (result['GAME_MARGIN'] == 0.0).all()
+
+def test_add_team_rolling_margin_missing_cols(ingestion):
+    df = pd.DataFrame({'OTHER': [1, 2, 3]})
+    result = ingestion._add_team_rolling_margin(df)
+    assert 'TEAM_L10_MARGIN' in result.columns
+    assert (result['TEAM_L10_MARGIN'] == 0.0).all()
