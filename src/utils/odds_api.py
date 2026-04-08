@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _PROPS_MARKETS = "player_points,player_rebounds,player_assists,player_threes"
+_PROPS_BOOKMAKERS = "draftkings,fanduel,betmgm"  # US books con cobertura de props NBA
 _MARKET_TO_STAT = {
     "player_points":   "PTS",
     "player_rebounds": "REB",
@@ -89,7 +90,7 @@ class OddsAPIClient:
                     "regions": "us",
                     "markets": markets,
                     "oddsFormat": "decimal",
-                    "bookmakers": ",".join(self.bookmakers),
+                    "bookmakers": _PROPS_BOOKMAKERS,
                 },
                 timeout=20,
             )
