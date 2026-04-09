@@ -24,26 +24,60 @@ def run_oracle():
         oracle = NBAOracleInference()
         ml_df, props_df = oracle.predict_today()
         
-        # Combinar los dataframes para el generador de reportes (simplificación para el MVP)
-        # O usar solo ml_df para compatibilidad con el reporte actual si props_df está vacío.
-        predictions_df = ml_df 
+        # Filtrar solo predicciones de Moneyline que tengan valor (EV > 2% y no sea NO BET)
+        if ml_df is not None and not ml_df.empty:
+            ml_picks_df = ml_df[(ml_df['RECOMMENDATION'] != 'NO BET') & (ml_df['EV'] > 0.02)]
+        else:
+            ml_picks_df = ml_df
         
-        if predictions_df is not None and not predictions_df.empty:
-            # 2. Persistencia en BigQuery (Moneyline histórico)
-            bq_client.insert_predictions(predictions_df)
+        if (ml_df is not None and not ml_df.empty) or (props_df is not None and not props_df.empty):
+            # 2. Persistencia en BigQuery (Moneyline histórico completo, no solo picks)
+            if ml_df is not None:
+                bq_client.insert_predictions(ml_df)
 
             # 3. Generación de Reporte y Envío de Email
-            # Props como sección principal + Game Script como contexto (o solo ML si no hay props)
+            props_section = ""
             if props_df is not None and not props_df.empty:
-                props_html = NBAReportGenerator.generate_props_report(props_df, bankroll=int(oracle.bankroll))
-                ml_html = NBAReportGenerator.generate_html_report(predictions_df)
-                report_html = props_html + ml_html
+                props_section = NBAReportGenerator.generate_props_report(props_df, bankroll=int(oracle.bankroll), wrap_html=False)
+            
+            ml_section = ""
+            if ml_picks_df is not None and not ml_picks_df.empty:
+                ml_section = NBAReportGenerator.generate_html_report(ml_picks_df, wrap_html=False)
+            
+            if props_section or ml_section:
+                # Layout Maestro
+                report_html = f"""
+                <html>
+                <head>{NBAReportGenerator._get_css()}</head>
+                <body>
+                    <div class="header-container">
+                        <h1 style="margin:0;">🏀 Oráculo NBA v2: Picks del Día</h1>
+                        <p style="margin:5px 0 0 0;">Fecha: {datetime.now().strftime('%d/%m/%Y')} | Banca Virtual: ${int(oracle.bankroll):,} USD</p>
+                    </div>
+                    {props_section}
+                    {ml_section}
+                    <div style="font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px; margin-top: 20px;">
+                        <p><b>Glosario:</b><br>
+                        - <b>EV:</b> Ventaja matemática sobre la casa de apuestas.<br>
+                        - <b>Kelly:</b> Gestión de banca fraccional (0.25) para maximizar crecimiento logarítmico.<br>
+                        - <b>Banca Virtual:</b> Simulación basada en un capital ficticio inicial de $20,000 USD para Paper Trading.</p>
+                        <p><i>Disclaimer: Este reporte es informativo. Las apuestas deportivas conllevan riesgo.</i></p>
+                    </div>
+                </body>
+                </html>
+                """
+                email_service.send_prediction_report(report_html)
+                logger.info("✅ EJECUCIÓN COMPLETADA EXITOSAMENTE CON PICKS ENVIADOS.")
             else:
-                report_html = NBAReportGenerator.generate_html_report(predictions_df)
-            email_service.send_prediction_report(report_html)
-
-            logger.info("✅ EJECUCIÓN COMPLETADA EXITOSAMENTE.")
-            return jsonify({"status": "success", "message": "Predicciones enviadas"}), 200
+                msg = "No se encontraron oportunidades con Valor Esperado (EV) positivo hoy."
+                logger.info(f"ℹ️ {msg}")
+                email_service.send_email(
+                    subject="🏀 Oráculo NBA: Sin picks de valor hoy",
+                    body=msg,
+                    is_html=False
+                )
+            
+            return jsonify({"status": "success", "message": "Proceso terminado"}), 200
         else:
             msg = "No hay partidos NBA programados para hoy."
             logger.warning(f"⚠️ {msg}")

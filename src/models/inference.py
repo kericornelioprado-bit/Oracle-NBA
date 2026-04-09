@@ -34,8 +34,9 @@ class NBAOracleInference:
         self.props_model = PlayerPropsModel()
         
         # Obtener banca virtual real desde BQ o default
-        self.bankroll = self.bq_client.get_virtual_bankroll()
+        self.bankroll = max(0, self.bq_client.get_virtual_bankroll())
         self.min_ev = float(os.getenv("MIN_EV_THRESHOLD") or 0.05) # 5% EV mínimo para Props
+        self.max_ev_cap = 1.0 # Cap a 100% EV para evitar anomalías (bugs de datos)
         self.kelly_fraction = float(os.getenv("KELLY_FRACTION") or 0.25)
         
         # Obtener portafolio actual
@@ -169,7 +170,7 @@ class NBAOracleInference:
                     bookmaker = best['best_away_bookie'] or 'N/A'
                     bet_prob = 1 - prob_home
                 if rec_odds > 1.0:
-                    ev = round(bet_prob * rec_odds - 1, 4)
+                    ev = min(self.max_ev_cap, round(bet_prob * rec_odds - 1, 4))
                     kelly_pct = self.calculate_kelly(bet_prob, rec_odds)
                     stake = round(kelly_pct * self.bankroll, 2)
 
@@ -232,6 +233,7 @@ class NBAOracleInference:
                     ev = self.props_model.calculate_ev(prob_over, odds_open)
 
                     if ev > self.min_ev:
+                        ev = min(self.max_ev_cap, ev) # Cap EV para evitar outliers
                         kelly = self.calculate_kelly(prob_over, odds_open)
                         stake = kelly * self.bankroll
 

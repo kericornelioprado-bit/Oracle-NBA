@@ -37,31 +37,31 @@ class NBAReportGenerator:
     }
 
     @staticmethod
-    def generate_html_report(predictions_df):
+    def _get_css():
+        return """
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                table { border-collapse: collapse; width: 100%; font-size: 14px; margin-bottom: 20px; }
+                th, td { border: 1px solid #dddddd; text-align: center; padding: 10px; }
+                th { background-color: #0d1b2a; color: white; }
+                tr:nth-child(even) { background-color: #f8f9fa; }
+                .recommendation-HOME { background-color: #d4edda; color: #155724; font-weight: bold; }
+                .recommendation-AWAY { background-color: #cce5ff; color: #004085; font-weight: bold; }
+                .recommendation-NO_BET { color: #6c757d; font-style: italic; }
+                .value-high { color: #28a745; font-weight: bold; }
+                .header-container { background: #1d3557; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+                .section-title { background: #f1f1f1; padding: 10px; font-weight: bold; border-left: 5px solid #1d3557; margin-top: 20px; }
+            </style>
+        """
+
+    @staticmethod
+    def generate_html_report(predictions_df, wrap_html=True):
         """Genera un reporte HTML visualmente atractivo con métricas de Value Betting."""
         if predictions_df is None or predictions_df.empty:
-            return "<p>No hay partidos programados para hoy.</p>"
+            return "<p>No hay picks de Moneyline hoy.</p>"
         
-        html = f"""
-        <html>
-        <head>
-            <style>
-                table {{ border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 14px; }}
-                th, td {{ border: 1px solid #dddddd; text-align: center; padding: 10px; }}
-                th {{ background-color: #0d1b2a; color: white; }}
-                tr:nth-child(even) {{ background-color: #f8f9fa; }}
-                .recommendation-HOME {{ background-color: #d4edda; color: #155724; font-weight: bold; }}
-                .recommendation-AWAY {{ background-color: #cce5ff; color: #004085; font-weight: bold; }}
-                .recommendation-NO_BET {{ color: #6c757d; font-style: italic; }}
-                .value-high {{ color: #28a745; font-weight: bold; }}
-                .header-container {{ background: #1d3557; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }}
-            </style>
-        </head>
-        <body>
-            <div class="header-container">
-                <h1 style="margin:0;">🏀 Oráculo NBA v2: Value Betting Report</h1>
-                <p style="margin:5px 0 0 0;">Fecha: {datetime.now().strftime('%d/%m/%Y')} | Banca Virtual de Paper Trading: $20,000 USD</p>
-            </div>
+        content = f"""
+            <div class="section-title">📊 Predicciones de Ganador (Moneyline)</div>
             <table>
                 <tr>
                     <th>Local</th>
@@ -90,7 +90,7 @@ class NBAReportGenerator:
             units = f"${row['UNITS_SUGGESTED']:.2f}"
             odds = f"{row['ODDS']:.2f}" if row['ODDS'] > 0 else "N/A"
             
-            html += f"""
+            content += f"""
                 <tr>
                     <td>{home_name}</td>
                     <td>{away_name}</td>
@@ -104,45 +104,32 @@ class NBAReportGenerator:
                 </tr>
             """
 
-        html += """
-            </table>
-            <br>
-            <div style="font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
-                <p><b>Glosario:</b><br>
-                - <b>EV:</b> Ventaja matemática sobre la casa de apuestas.<br>
-                - <b>Kelly:</b> Gestión de banca fraccional (0.25) para maximizar crecimiento logarítmico.<br>
-                - <b>Banca Virtual:</b> Simulación basada en un capital ficticio inicial de $20,000 USD para Paper Trading.</p>
-                <p><i>Disclaimer: Este reporte es informativo. Las apuestas deportivas conllevan riesgo.</i></p>
+        content += "</table>"
+
+        if not wrap_html:
+            return content
+
+        return f"""
+        <html>
+        <head>{NBAReportGenerator._get_css()}</head>
+        <body>
+            <div class="header-container">
+                <h1 style="margin:0;">🏀 Oráculo NBA v2: Picks del Día</h1>
+                <p style="margin:5px 0 0 0;">Fecha: {datetime.now().strftime('%d/%m/%Y')} | Banca Virtual: $20,000 USD</p>
             </div>
+            {content}
         </body>
         </html>
         """
-        return html
 
     @staticmethod
-    def generate_props_report(props_df, bankroll=20000):
+    def generate_props_report(props_df, bankroll=20000, wrap_html=True):
         """Genera un reporte HTML de picks de Player Props."""
         if props_df is None or props_df.empty:
             return "<p>No hay picks de Player Props disponibles para hoy.</p>"
 
-        html = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; }}
-                table {{ border-collapse: collapse; width: 100%; font-size: 14px; }}
-                th, td {{ border: 1px solid #dddddd; text-align: center; padding: 10px; }}
-                th {{ background-color: #0d1b2a; color: white; }}
-                tr:nth-child(even) {{ background-color: #f8f9fa; }}
-                .value-high {{ color: #28a745; font-weight: bold; }}
-                .header-container {{ background: #1d3557; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }}
-            </style>
-        </head>
-        <body>
-            <div class="header-container">
-                <h1 style="margin:0;">🏀 Oráculo NBA v2: Player Props Report</h1>
-                <p style="margin:5px 0 0 0;">Fecha: {datetime.now().strftime('%d/%m/%Y')} | Banca Virtual: ${bankroll:,.0f} USD</p>
-            </div>
+        content = f"""
+            <div class="section-title">🎯 Picks de Player Props (V2)</div>
             <table>
                 <tr>
                     <th>Jugador</th>
@@ -163,7 +150,7 @@ class NBAReportGenerator:
             odds      = row.get('odds_open', 'N/A')
             odds_str  = f"{odds:.2f}" if isinstance(odds, float) else str(odds)
 
-            html += f"""
+            content += f"""
                 <tr>
                     <td><b>{row['player_name']}</b></td>
                     <td>{row['market']}</td>
@@ -176,18 +163,21 @@ class NBAReportGenerator:
                 </tr>
             """
 
-        html += """
-            </table>
-            <br>
-            <div style="font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px;">
-                <p><b>Glosario:</b><br>
-                - <b>EV:</b> Ventaja matemática sobre la casa de apuestas.<br>
-                - <b>Kelly:</b> Gestión de banca fraccional (0.25) para maximizar crecimiento logarítmico.<br>
-                - <b>Banca Virtual:</b> Simulación basada en un capital ficticio inicial de $20,000 USD para Paper Trading.</p>
-                <p><i>Disclaimer: Este reporte es informativo. Las apuestas deportivas conllevan riesgo.</i></p>
+        content += "</table>"
+
+        if not wrap_html:
+            return content
+
+        return f"""
+        <html>
+        <head>{NBAReportGenerator._get_css()}</head>
+        <body>
+            <div class="header-container">
+                <h1 style="margin:0;">🏀 Oráculo NBA v2: Picks de Props</h1>
+                <p style="margin:5px 0 0 0;">Fecha: {datetime.now().strftime('%d/%m/%Y')} | Banca Virtual: ${bankroll:,.0f} USD</p>
             </div>
+            {content}
         </body>
         </html>
         """
-        return html
 

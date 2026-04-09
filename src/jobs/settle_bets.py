@@ -130,12 +130,20 @@ def main():
         stake       = float(bet.stake_usd)
         odds        = float(bet.odds_open)
 
-        is_win      = actual_stat > line if direction == 'OVER' else actual_stat < line
-        result      = 'WIN' if is_win else 'LOSS'
-        payout      = stake * (odds - 1) if is_win else -stake
-        current_bankroll += payout
+        # Si por algún error previo el stake fue negativo o cero, no actualizamos el bankroll
+        if stake <= 0:
+            logger.warning(f"  {bet.player_name} | Stake inválido (${stake}). Saltando ajuste de banca.")
+            payout = 0
+            is_win = actual_stat > line if direction == 'OVER' else actual_stat < line
+            result = 'WIN' if is_win else 'LOSS'
+        else:
+            is_win      = actual_stat > line if direction == 'OVER' else actual_stat < line
+            result      = 'WIN' if is_win else 'LOSS'
+            payout      = stake * (odds - 1) if is_win else -stake
+            current_bankroll += payout
 
-        update_query = f"""
+        # Garantizar que el bankroll nunca sea negativo por errores de cálculo
+        current_bankroll = max(0, current_bankroll)
             UPDATE `{bq.project_id}.{bq.dataset_id_v2}.bet_history`
             SET result = '{result}',
                 payout = {payout:.4f},

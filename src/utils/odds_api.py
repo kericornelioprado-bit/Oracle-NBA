@@ -178,7 +178,7 @@ class OddsAPIClient:
         best_home_bookie = ""
         best_away_bookie = ""
 
-        home_team = event_data.get("home_team")
+        home_team = event_data.get("home_team", "").lower().strip()
 
         for bookmaker in event_data.get("bookmakers", []):
             market = bookmaker.get("markets", [{}])[0]
@@ -186,7 +186,7 @@ class OddsAPIClient:
 
             for outcome in outcomes:
                 price = outcome.get("price", 0)
-                name = outcome.get("name")
+                name = outcome.get("name", "").lower().strip()
 
                 if name == home_team:
                     if price > best_home_odds:
