@@ -144,6 +144,8 @@ def main():
 
         # Garantizar que el bankroll nunca sea negativo por errores de cálculo
         current_bankroll = max(0, current_bankroll)
+
+        update_query = f"""
             UPDATE `{bq.project_id}.{bq.dataset_id_v2}.bet_history`
             SET result = '{result}',
                 payout = {payout:.4f},
