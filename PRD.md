@@ -1,7 +1,9 @@
-# PRD — Oráculo NBA V2: Motor de Proyección de Player Props
+# PRD — Oráculo NBA V2 & Diamante MLB V1
 
-**Estado:** Definido / Listo para Arquitectura
-**Capital de Simulación:** $20,000 MXN (Ficticios)
+> **Nota Arquitectónica (Abril 2026):** Este proyecto se ha transformado en un Monorepo ("Oracle Sports Suite"). La fase actual incluye el desarrollo de **Diamante MLB V1**, enfocado en el mercado de *Pitcher Strikeouts*. El core de NBA definido en este PRD sigue siendo el pilar central del sistema, mientras que la infraestructura ahora se comparte entre deportes.
+
+**Estado:** NBA en Producción / MLB en Fase de Ingesta
+**Capital de Simulación:** $20,000 MXN (Por deporte)
 **Filosofía:** *"Si requiere intervención humana, no es un sistema; es una hoja de cálculo con pasos extra."*
 **Versión:** 2.0 — Corregido con mecanismos de defensa, diagnóstico y presupuesto de API.
 

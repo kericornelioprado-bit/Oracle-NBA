@@ -1,66 +1,32 @@
-# ARCHITECTURE.md - Oráculo NBA V2: Prop Arbitrage & Paper Trading
+# ARCHITECTURE.md - Oracle Sports Suite (Monorepo)
 
 ## 1. Visión Técnica
-El sistema Oráculo NBA V2 evoluciona de un predictor de victorias a un motor de arbitraje de valor en **Player Props**. La arquitectura se basa en el principio de **"Intervención Cero"**, donde el sistema se auto-regula, se auto-programa y se auto-evalúa financieramente sin participación humana.
+El sistema ha evolucionado de "Oráculo NBA" a un **Oracle Sports Suite** multi-deporte. La arquitectura se basa en el principio de **"Intervención Cero"** e incluye un enfoque de Monorepo por capas.
 
-## 2. Topología de GCP (Estrategia Cloud-Native)
-El sistema se despliega como un servicio único en **Cloud Run**, orquestado por tres disparadores de **Cloud Scheduler**:
+## 2. Estructura de Monorepo (Fase 1)
+El código se organiza para maximizar la reutilización y el aislamiento:
+- **`src/shared/`**: Clientes genéricos (`BigQueryClient`, `BallDontLieClient`, `EmailService`). Parametrizados por `sport`.
+- **`src/nba/`**: (Actualmente en `src/utils` / `src/models`) Mantiene el motor de NBA V2 intacto.
+- **`src/mlb/`**: (En construcción) Contendrá `data/`, `models/` y `jobs/` específicos para Diamante MLB.
 
-1.  **Job Diario de Predicción (16:30 CST):**
-    - Ejecución "One-Shot" del pipeline de 14 minutos.
-    - Genera predicciones de Moneyline -> Game Script -> Proyección de Minutos -> Predicción de Stats.
-    - Calcula EV y Kelly 1/4 sobre la banca virtual de $20k.
-    - Envía el reporte final por correo.
+## 3. Topología de GCP (Cloud-Native)
+El sistema se despliega como una imagen unificada en **Cloud Run**, pero es orquestado de forma granular por **Cloud Scheduler** utilizando parámetros CLI:
 
-2.  **Job de Liquidación (03:00 AM):**
-    - Cierre de apuestas del día anterior.
-    - Consulta resultados reales en `nba_api`.
-    - Calcula ROI real vs. esperado y actualiza el saldo en BigQuery.
-    - Mide el CLV (Closing Line Value) comparando cuota de apertura vs. cierre de Pinnacle.
+1.  **Oráculo NBA:**
+    - `predict` (16:30 CST): Genera predicciones de Moneyline y Props.
+    - `settle` (03:00 AM): Liquidación de apuestas del día anterior.
 
-3.  **Job de Portafolio (Domingo 23:59 CST):**
-    - Re-cálculo automático del "Top 20" de jugadores.
-    - Ejecuta queries de `minute_swing` (sensibilidad al margen) e `injury_heir` (redistribución de minutos).
-    - Actualiza la tabla de referencia en BigQuery para la semana entrante.
+2.  **Diamante MLB (Próximamente):**
+    - `ingest` (Temprano): Ingesta de box scores de la noche anterior.
+    - `predict` (Pre-juego): Evaluación de líneas de props basadas en lineups confirmados.
 
-## 3. Esquema de Datos (BigQuery)
-Dataset centralizado: `oracle_nba_v2`
+## 4. Esquema de Datos (BigQuery)
+Los datasets se asignan dinámicamente por deporte (`oracle_nba_ds`, `oracle_nba_v2`, `oracle_mlb_ds`, `oracle_mlb_v2`).
+- **`bet_history`**: Ledger universal de Paper Trading.
+- **`virtual_bankroll`**: Balance actual separado por deporte.
+- Tablas específicas de logs de juegos (ej. `mlb_pitcher_game_logs`).
 
-### `virtual_bankroll`
-- `current_balance`: FLOAT (Inicia en 20,000.00).
-- `last_updated`: TIMESTAMP.
-
-### `bet_history` (Paper Trading Ledger)
-- `bet_id`: STRING (UUID).
-- `player_name`: STRING.
-- `market`: STRING (REB, AST, PRA).
-- `line`: FLOAT.
-- `odds_open`: FLOAT (Cuota al momento del pick).
-- `odds_close`: FLOAT (Cuota de cierre para CLV).
-- `stake_usd`: FLOAT (Monto apostado).
-- `result`: STRING (PENDING, WIN, LOSS, PUSH).
-- `payout`: FLOAT (Ganancia/Pérdida neta).
-
-### `top_20_portfolio`
-- `tier`: INTEGER (1: Núcleo, 2: Volatilidad, 3: Señuelo).
-- `player_id`: INTEGER.
-- `minute_swing`: FLOAT.
-- `updated_at`: TIMESTAMP.
-
-## 4. El "Motor de Minutos" (Lógica de Negocio)
-Componente modular dentro de Cloud Run que procesa:
-- **Input:** Game Script (Margen ML), Injury Report, B2B, Rest Days.
-- **Filtro GTD:** Si un jugador clave es `Questionable` a las 16:30 CST -> `SKIP_GAME` (Incertidumbre cero).
-- **Heurísticas:**
-    - `Blowout Win (>+15)`: Boost de minutos para Tier 1 (Bench).
-    - `Injury Heir`: Si el titular está OUT, el backup del Tier 2 hereda ~60% de sus minutos.
-
-## 5. Estrategia de Inferencia
-- **Modelos:** Regresión (Ridge/XGBoost) entrenados por estadística (REB, AST, Puntos).
-- **Feature Clave:** `projected_minutes` (generado por el Motor de Minutos).
-- **Conversión de Probabilidad:** Distribución histórica del jugador para calcular `P(Over > Line)`.
-
-## 6. Monitoreo y Logging
-- **Alertas:** El sistema debe registrar en **Cloud Logging** cada decisión de `SKIP` o `PICK`.
-- **Salud:** Registro de cada ejecución de Cloud Scheduler para detectar fallos del Cron.
-- **Reporting:** El correo de las 16:30 es el único punto de contacto con el usuario.
+## 5. Estrategia de Inferencia y Monitoreo
+- Modelos de Stacking (LightGBM + XGBoost + Ridge).
+- Evaluación constante del CLV (Closing Line Value).
+- Alertas generadas dinámicamente por el `EmailService` compartido.
