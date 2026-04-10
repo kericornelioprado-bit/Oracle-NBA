@@ -26,6 +26,7 @@ def make_predictions_df():
         'AWAY_ID': [1610612743],
         'PROB_HOME_WIN': [0.63],
         'RECOMMENDATION': ['HOME'],
+        'EV': [0.05],
     })
 
 
